@@ -1,0 +1,48 @@
+genre: tech_house
+name: Tech House
+description: Bass-and-groove driven. The rolling bassline is the star; vocals come as short chops. Long, mixable intro and outro.
+bpm: 126
+bpm_range: [124, 128]
+
+roles:
+  kick:          { name: Kick, color: "#E5484D" }
+  hats:          { name: Hats, color: "#F76B15" }
+  perc:          { name: Perc, color: "#FFB224" }
+  clap:          { name: Clap, color: "#F5D90A" }
+  open_hats:     { name: Open Hats, fallback: [hats], color: "#FFC53D" }
+  ride:          { name: Ride, fallback: [hats], color: "#FFA057" }
+  bass:          { name: Bass, color: "#0090FF" }
+  bass_filtered: { name: Bass (filtered), kind: bass, color: "#3E9BFF", in_all: false,
+                   note: "Low-passed or high-passed bass so the groove keeps going through the breakdown" }
+  stab:          { name: Stab, kind: chords, fallback: [lead], color: "#30A46C" }
+  vocal:         { name: Vocal Chop, kind: vocal, fallback: [lead], color: "#8E4EC6" }
+  vocal_full:    { name: Vocal (full phrase), kind: vocal, variation_of: vocal, color: "#AB4ABA", in_all: false }
+  snare_roll:    { name: Snare Roll, color: "#F2555A", in_all: false }
+  perc_switch:   { name: Perc Switch-up, kind: perc, variation_of: perc, color: "#FFCB47", in_all: false,
+                   note: "A different perc pattern so Drop 2 is not a copy of Drop 1" }
+
+variants:
+  extended:
+    description: Club mix, about 7 minutes at 126 BPM.
+    sections:
+      - { name: Intro A,     bars: 16, energy: 3, roles: [kick, hats] }
+      - { name: Intro B,     bars: 16, energy: 4, roles: [kick, hats, perc, clap] }
+      - { name: Groove,      bars: 16, energy: 6, roles: [kick, hats, perc, clap, bass] }
+      - { name: Groove +,    bars: 16, energy: 7, roles: [kick, hats, perc, clap, bass, open_hats, vocal] }
+      - { name: Breakdown,   bars: 16, energy: 5, roles: [bass_filtered, vocal_full, stab] }
+      - { name: Build,       bars: 8,  energy: 7, roles: [bass_filtered, vocal, snare_roll] }
+      - { name: Drop 1,      bars: 32, energy: 9, roles: [all] }
+      - { name: Mid,         bars: 16, energy: 6, roles: [kick, bass, perc, ride] }
+      - { name: Breakdown 2, bars: 16, energy: 5, roles: [bass_filtered, vocal_full] }
+      - { name: Build 2,     bars: 8,  energy: 8, roles: [bass_filtered, vocal, snare_roll] }
+      - { name: Drop 2,      bars: 32, energy: 10, roles: [all, perc_switch, -perc] }
+      - { name: Outro A,     bars: 16, energy: 5, roles: [kick, hats, perc, clap, bass] }
+      - { name: Outro B,     bars: 16, energy: 3, roles: [kick, hats] }
+    transitions:
+      - { type: gap, section: Groove +, at: end, bars: 1, roles: [kick, bass] }
+      - { type: gap, section: Build, at: end, bars: 1, roles: [all] }
+      - { type: gap, section: Build 2, at: end, bars: 1, roles: [all] }
+      - { type: riser, section: Build, at: whole }
+      - { type: riser, section: Build 2, at: whole }
+      - { type: crash, sections: [Groove, Drop 1, Drop 2, Outro A] }
+      - { type: fill, every: 8, bars: 1 }

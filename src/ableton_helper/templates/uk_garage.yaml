@@ -1,0 +1,38 @@
+genre: uk_garage
+name: UK Garage (2-step)
+description: Song-shaped. Verses, a hooky chorus, swung 2-step drums and a bouncing sub or organ bass.
+bpm: 132
+bpm_range: [130, 138]
+
+roles:
+  kick:       { name: Kick, color: "#E5484D" }
+  snare:      { name: Snare / Clap, kind: clap, color: "#F5D90A" }
+  hats:       { name: Hats (swung), color: "#F76B15" }
+  perc:       { name: Perc / Shuffle, color: "#FFB224" }
+  bass:       { name: Bass, color: "#0090FF" }
+  chords:     { name: Chords / Organ, color: "#30A46C" }
+  pad:        { name: Pad, color: "#12A594", in_all: false }
+  vocal:      { name: Vocal (verse), fallback: [lead], color: "#8E4EC6" }
+  hook:       { name: Hook (chorus), kind: vocal, variation_of: vocal, fallback: [lead], color: "#AB4ABA" }
+
+variants:
+  extended:
+    description: About 5 minutes at 132 BPM.
+    sections:
+      - { name: Intro,      bars: 16, energy: 3, roles: [kick, snare, hats, perc] }
+      - { name: Verse 1,    bars: 16, energy: 5, roles: [kick, snare, hats, bass, chords, vocal] }
+      - { name: Pre 1,      bars: 8,  energy: 6, roles: [snare, hats, chords, vocal, pad] }
+      - { name: Chorus 1,   bars: 16, energy: 8, roles: [all, -vocal] }
+      - { name: Verse 2,    bars: 16, energy: 6, roles: [kick, snare, hats, perc, bass, chords, vocal] }
+      - { name: Pre 2,      bars: 8,  energy: 6, roles: [snare, hats, chords, vocal, pad] }
+      - { name: Chorus 2,   bars: 16, energy: 9, roles: [all, -vocal] }
+      - { name: Breakdown,  bars: 8,  energy: 4, roles: [chords, pad, hook] }
+      - { name: Chorus 3,   bars: 16, energy: 10, roles: [all, pad, -vocal] }
+      - { name: Outro,      bars: 16, energy: 3, roles: [kick, snare, hats, perc] }
+    transitions:
+      - { type: gap, section: Pre 1, at: end, bars: 1, roles: [all] }
+      - { type: gap, section: Pre 2, at: end, bars: 1, roles: [all] }
+      - { type: riser, section: Pre 1, at: whole }
+      - { type: riser, section: Pre 2, at: whole }
+      - { type: crash, sections: [Verse 1, Chorus 1, Chorus 2, Chorus 3] }
+      - { type: fill, every: 8, bars: 1 }

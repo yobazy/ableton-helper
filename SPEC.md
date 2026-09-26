@@ -53,6 +53,23 @@ Ableton Live
 
 ## Build order
 
+### Progress (2026-09-26)
+
+| Step | Status |
+|---|---|
+| 1.1 Baseline | Benchmark written (`uv run ableton-helper bench`). Not yet run: needs Live open with the Remote Script enabled. |
+| 1.2 `get_session_snapshot` | Done: the `get_session` tool. |
+| 1.3 `build_arrangement` | Done: one request, one main-thread tick, one undo step. |
+| 1.4 Genre templates | Done: house (extended, radio), tech house, deep house, techno, DnB, UK garage. |
+| 1.5 Arrange existing loops | Done: the `match_roles` and `arrange_session` tools. |
+| 1.6 Transitions | Partly done. Gaps are applied at build time. Placeholders cover risers, downlifters, crashes and fills. Filter-sweep automation isn't built yet. |
+
+**Change from the plan:** instead of forking ableton-mcp, this repo has its own small Remote Script that reuses upstream's socket and threading approach (MIT, credited in THIRD_PARTY_NOTICES.md). Two reasons:
+- Upstream includes telemetry and an opt-in dataset uploader (Supabase), which aren't wanted here.
+- Its one-request-per-change design is exactly what this project replaces.
+
+Our script listens on port 9878, so it can run next to upstream (9877). The 1.1 benchmark compares the two designs by sending the same ops one request at a time and then as one batch.
+
 ### Phase 1 — Batch tools and genre templates (MVP)
 
 **1.1 Fork and measure a baseline**

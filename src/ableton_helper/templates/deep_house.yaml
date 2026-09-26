@@ -1,0 +1,35 @@
+genre: deep_house
+name: Deep House
+description: Warm, patient and hypnotic. Changes are gradual; the breakdown softens rather than stops.
+bpm: 120
+bpm_range: [118, 124]
+
+roles:
+  kick:      { name: Kick, color: "#E5484D" }
+  hats:      { name: Hats, color: "#F76B15" }
+  shaker:    { name: Shaker, kind: perc, color: "#FFB224" }
+  clap:      { name: Clap / Rim, color: "#F5D90A" }
+  bass:      { name: Bass, color: "#0090FF" }
+  keys:      { name: Keys / Chords, kind: chords, color: "#30A46C" }
+  pad:       { name: Pad, color: "#12A594" }
+  vocal:     { name: Vocal, fallback: [lead], color: "#8E4EC6" }
+  lead:      { name: Lead / Melody, fallback: [chords], color: "#6E56CF", in_all: false }
+
+variants:
+  extended:
+    description: About 7.5 minutes at 120 BPM.
+    sections:
+      - { name: Intro A,     bars: 16, energy: 2, roles: [kick, hats, pad] }
+      - { name: Intro B,     bars: 16, energy: 3, roles: [kick, hats, shaker, pad] }
+      - { name: Groove,      bars: 32, energy: 5, roles: [kick, hats, shaker, clap, bass, keys] }
+      - { name: Breakdown,   bars: 16, energy: 4, roles: [hats, keys, pad, vocal] }
+      - { name: Main,        bars: 32, energy: 7, roles: [all] }
+      - { name: Interlude,   bars: 16, energy: 5, roles: [kick, shaker, bass, pad, lead] }
+      - { name: Main 2,      bars: 32, energy: 8, roles: [all, lead] }
+      - { name: Outro A,     bars: 16, energy: 4, roles: [kick, hats, shaker, bass] }
+      - { name: Outro B,     bars: 16, energy: 2, roles: [kick, hats] }
+    transitions:
+      - { type: gap, section: Groove, at: end, bars: 1, roles: [kick] }
+      - { type: riser, section: Breakdown, at: end, bars: 4 }
+      - { type: crash, sections: [Main, Main 2] }
+      - { type: fill, every: 16, bars: 1 }

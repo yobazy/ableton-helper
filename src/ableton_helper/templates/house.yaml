@@ -1,0 +1,70 @@
+genre: house
+name: House
+description: Classic 4/4 house. Groove first, one emotional breakdown, a big drop, DJ-friendly intro and outro.
+bpm: 124
+bpm_range: [120, 128]
+
+# Roles are the parts a track is made of. `kind` is what the role matcher looks
+# for in your track and clip names (defaults to the role's own key).
+# in_all: false keeps a role out of sections that list `all`.
+roles:
+  kick:            { name: Kick, color: "#E5484D" }
+  hats:            { name: Hats, color: "#F76B15" }
+  perc:            { name: Perc, color: "#FFB224" }
+  clap:            { name: Clap, color: "#F5D90A" }
+  open_hats:       { name: Open Hats, kind: open_hats, fallback: [hats], color: "#FFC53D" }
+  bass:            { name: Bass, color: "#0090FF" }
+  chords:          { name: Chords, color: "#30A46C" }
+  chords_filtered: { name: Chords (filtered), kind: chords, color: "#4CC38A", in_all: false,
+                     note: "Same chord loop with a low-pass filter opening slowly across the section" }
+  pad:             { name: Pad, color: "#12A594" }
+  hook:            { name: Hook, kind: vocal, fallback: [lead], color: "#8E4EC6" }
+  hook_variation:  { name: Hook (variation), kind: vocal, fallback: [lead], variation_of: hook, color: "#AB4ABA", in_all: false }
+  snare_roll:      { name: Snare Roll, color: "#F2555A", in_all: false }
+  new_element:     { name: New Element, kind: lead, color: "#6E56CF", in_all: false,
+                     note: "Something the listener has not heard yet: a counter-melody, a new perc, a vocal chop" }
+  extra_layer:     { name: Extra Layer, kind: lead, fallback: [pad], color: "#5B5BD6", in_all: false,
+                     note: "Makes Drop 2 bigger than Drop 1" }
+
+variants:
+  extended:
+    description: Extended / club mix, about 7 minutes at 124 BPM.
+    sections:
+      - { name: Intro A,     bars: 16, energy: 2, roles: [kick, hats] }
+      - { name: Intro B,     bars: 16, energy: 3, roles: [kick, hats, perc] }
+      - { name: Groove,      bars: 16, energy: 5, roles: [kick, hats, perc, bass, clap] }
+      - { name: Groove +,    bars: 16, energy: 6, roles: [kick, hats, perc, bass, clap, open_hats, chords_filtered] }
+      - { name: Breakdown,   bars: 16, energy: 4, roles: [chords, pad, hook] }
+      - { name: Build,       bars: 16, energy: 7, roles: [chords, hook, snare_roll] }
+      - { name: Drop 1,      bars: 32, energy: 9, roles: [all] }
+      - { name: Mid,         bars: 16, energy: 6, roles: [kick, hats, perc, bass, clap, new_element] }
+      - { name: Breakdown 2, bars: 16, energy: 4, roles: [chords, pad, hook_variation] }
+      - { name: Drop 2,      bars: 32, energy: 10, roles: [all, extra_layer] }
+      - { name: Outro A,     bars: 16, energy: 4, roles: [kick, hats, perc, bass] }
+      - { name: Outro B,     bars: 16, energy: 2, roles: [kick, hats] }
+    transitions:
+      - { type: gap, section: Groove +, at: end, bars: 1, roles: [kick], note: "Kick drops out for a bar before the breakdown" }
+      - { type: gap, section: Build, at: end, bars: 1, roles: [all], note: "A bar of silence before the drop" }
+      - { type: riser, section: Build, at: whole }
+      - { type: riser, section: Breakdown 2, at: end, bars: 8 }
+      - { type: downlifter, section: Breakdown, at: start, bars: 2 }
+      - { type: downlifter, section: Breakdown 2, at: start, bars: 2 }
+      - { type: crash, sections: [Groove, Drop 1, Mid, Drop 2, Outro A] }
+      - { type: fill, every: 16, bars: 1 }
+
+  radio:
+    description: Radio edit, about 3.5 minutes at 124 BPM. Gets to the hook fast.
+    sections:
+      - { name: Intro,       bars: 8,  energy: 3, roles: [kick, hats, perc] }
+      - { name: Groove,      bars: 16, energy: 5, roles: [kick, hats, perc, bass, clap, chords_filtered] }
+      - { name: Breakdown,   bars: 16, energy: 4, roles: [chords, pad, hook] }
+      - { name: Build,       bars: 8,  energy: 7, roles: [chords, hook, snare_roll] }
+      - { name: Drop 1,      bars: 32, energy: 9, roles: [all] }
+      - { name: Breakdown 2, bars: 8,  energy: 4, roles: [chords, hook_variation] }
+      - { name: Drop 2,      bars: 16, energy: 10, roles: [all, extra_layer] }
+      - { name: Outro,       bars: 8,  energy: 3, roles: [kick, hats, chords] }
+    transitions:
+      - { type: gap, section: Build, at: end, bars: 1, roles: [all] }
+      - { type: riser, section: Build, at: whole }
+      - { type: crash, sections: [Drop 1, Drop 2] }
+      - { type: fill, every: 8, bars: 1 }

@@ -1,0 +1,39 @@
+genre: drum_and_bass
+name: Drum & Bass
+description: Atmospheric intro, a hard-hitting drop, a switch-up for the second drop. 32-bar phrases at 174 BPM.
+bpm: 174
+bpm_range: [170, 176]
+
+roles:
+  kick:          { name: Kick, fallback: [drums], color: "#E5484D" }
+  snare:         { name: Snare, kind: clap, fallback: [drums], color: "#F5D90A" }
+  breaks:        { name: Hats / Breaks, kind: hats, fallback: [drums, perc], color: "#F76B15" }
+  perc:          { name: Perc, color: "#FFB224", in_all: false }
+  sub:           { name: Sub, kind: bass, color: "#0090FF" }
+  reese:         { name: Reese / Mid Bass, kind: bass, color: "#3E63DD" }
+  reese_switch:  { name: Bass Switch-up, kind: bass, variation_of: reese, color: "#5B5BD6", in_all: false,
+                   note: "The second drop's new bass pattern or sound" }
+  pad:           { name: Pad / Atmos, color: "#12A594" }
+  lead:          { name: Lead / Stab, fallback: [chords], color: "#8E4EC6" }
+  vocal:         { name: Vocal, fallback: [lead], color: "#AB4ABA", in_all: false }
+
+variants:
+  extended:
+    description: About 5.5 minutes at 174 BPM.
+    sections:
+      - { name: Intro A,     bars: 16, energy: 2, roles: [pad, vocal] }
+      - { name: Intro B,     bars: 16, energy: 4, roles: [pad, vocal, breaks, perc] }
+      - { name: Build,       bars: 16, energy: 6, roles: [pad, breaks, perc, snare, sub] }
+      - { name: Drop 1,      bars: 32, energy: 9, roles: [all] }
+      - { name: Breakdown,   bars: 32, energy: 4, roles: [pad, lead, vocal] }
+      - { name: Build 2,     bars: 16, energy: 7, roles: [pad, breaks, snare, vocal] }
+      - { name: Drop 2,      bars: 32, energy: 10, roles: [all, reese_switch, -reese] }
+      - { name: Outro,       bars: 32, energy: 4, roles: [kick, snare, breaks, sub, pad] }
+    transitions:
+      - { type: gap, section: Build, at: end, bars: 1, roles: [all] }
+      - { type: gap, section: Build 2, at: end, bars: 1, roles: [all] }
+      - { type: riser, section: Build, at: end, bars: 8 }
+      - { type: riser, section: Build 2, at: end, bars: 8 }
+      - { type: downlifter, section: Breakdown, at: start, bars: 2 }
+      - { type: crash, sections: [Drop 1, Drop 2] }
+      - { type: fill, every: 8, bars: 1 }

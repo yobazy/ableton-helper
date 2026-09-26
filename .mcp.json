@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ableton-helper": {
+      "command": "uv",
+      "args": ["run", "--directory", "/Users/bazil/Documents/Programming/ableton-helper", "ableton-helper-mcp"]
+    }
+  }
+}

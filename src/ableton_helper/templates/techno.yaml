@@ -1,0 +1,38 @@
+genre: techno
+name: Techno
+description: Hypnotic and relentless. Built on the kick and a rumble; tension comes from filtering and layering, not melody.
+bpm: 132
+bpm_range: [128, 140]
+
+roles:
+  kick:        { name: Kick, color: "#E5484D" }
+  rumble:      { name: Rumble / Bass, kind: bass, color: "#0090FF" }
+  hats:        { name: Hats, color: "#F76B15" }
+  ride:        { name: Ride, fallback: [hats], color: "#FFA057" }
+  perc:        { name: Perc, color: "#FFB224" }
+  clap:        { name: Clap, color: "#F5D90A" }
+  lead:        { name: Lead / Motif, fallback: [chords], color: "#8E4EC6" }
+  lead_filtered: { name: Lead (filtered), kind: lead, fallback: [chords], color: "#AB4ABA", in_all: false }
+  atmos:       { name: Atmos, kind: pad, color: "#12A594" }
+  noise:       { name: Noise / Texture, kind: fx, color: "#8B8D98", in_all: false }
+
+variants:
+  extended:
+    description: About 7 minutes at 132 BPM.
+    sections:
+      - { name: Intro A,   bars: 16, energy: 3, roles: [kick, hats] }
+      - { name: Intro B,   bars: 16, energy: 4, roles: [kick, hats, rumble, perc] }
+      - { name: Build A,   bars: 16, energy: 6, roles: [kick, hats, rumble, perc, clap, lead_filtered] }
+      - { name: Build B,   bars: 16, energy: 7, roles: [kick, hats, rumble, perc, clap, ride, lead_filtered] }
+      - { name: Breakdown, bars: 32, energy: 4, roles: [atmos, lead, noise] }
+      - { name: Peak,      bars: 32, energy: 9, roles: [all] }
+      - { name: Mid,       bars: 16, energy: 6, roles: [kick, rumble, perc, atmos] }
+      - { name: Peak 2,    bars: 32, energy: 10, roles: [all, noise] }
+      - { name: Outro A,   bars: 16, energy: 5, roles: [kick, hats, rumble, perc] }
+      - { name: Outro B,   bars: 16, energy: 3, roles: [kick, hats] }
+    transitions:
+      - { type: gap, section: Build B, at: end, bars: 1, roles: [kick, rumble] }
+      - { type: riser, section: Breakdown, at: end, bars: 8 }
+      - { type: gap, section: Mid, at: end, bars: 1, roles: [kick] }
+      - { type: crash, sections: [Build A, Peak, Peak 2] }
+      - { type: fill, every: 16, bars: 1 }
