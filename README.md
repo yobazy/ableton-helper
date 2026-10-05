@@ -2,6 +2,8 @@
 
 An AI arrangement assistant for Ableton Live 12. You make the loops; Claude turns them into a full, genre-shaped arrangement in Arrangement View — in one batch, in seconds.
 
+![A 224-bar tech house arrangement built from the template: one lane per part, locators at each section, and lanes for risers, impacts and fills](docs/arrangement.png)
+
 See [SPEC.md](SPEC.md) for the full plan (Max for Live chat window, audio analysis, reference-track arranging).
 
 ## What it does
