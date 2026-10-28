@@ -333,6 +333,30 @@ def test_session_clip_op_refuses_a_full_slot():
     assert "already has a clip" in result["errors"][0]["error"]
 
 
+def test_sections_unavailable_is_not_an_error(svc, files):
+    out = hearing.sections(svc, hearing.AudioSource(files["Audio 7"]))
+    assert out["available"] is False and "sections" in out["why"]
+    # /health says yes but the route is missing: still a plain "not yet".
+    svc.features.append("sections")
+    svc.sections_route_missing = True
+    assert hearing.sections(svc, hearing.AudioSource(files["Audio 7"]))["available"] is False
+
+
+def test_sections_in_bars_from_the_first_downbeat(svc, files):
+    svc.features.append("sections")
+    svc.sections_answer = {"bpm": 120.0, "downbeats": [0.5, 2.5, 4.5],
+                           "segments": [{"start": 0.0, "end": 16.5, "label": "intro", "energy": 0.5},
+                                        {"start": 16.5, "end": 48.5, "label": "chorus", "energy": 1.0}]}
+    out = hearing.sections(svc, hearing.AudioSource(files["Audio 7"]))
+    assert out["available"] is True
+    intro, chorus = out["segments"]
+    assert chorus["bar"] == 9.0 and chorus["bars"] == 16.0 and chorus["energy"] == 1.0
+    assert intro["label"] == "intro"
+    svc.calls.clear()
+    hearing.sections(svc, hearing.AudioSource(files["Audio 7"]))
+    assert [p for _m, p, _k in svc.calls] == ["/health"]  # served from the local cache
+
+
 def test_script_version_check():
     assert hearing.script_supports_session_clips({"version": "0.2.0"})
     assert hearing.script_supports_session_clips({"version": "0.10.1"})

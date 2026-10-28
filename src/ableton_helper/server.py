@@ -62,9 +62,10 @@ def audio() -> AudioService:
 
 
 def _sources(track: int | None, slot: int | None, bar: float | None, path: str | None,
-             one: bool = False) -> list[hearing.AudioSource]:
-    snap = None if path else live().snapshot(include_devices=False)
-    sources = hearing.find_sources(snap, track, slot, bar, path)
+             one: bool = False, snap: dict[str, Any] | None = None) -> list[hearing.AudioSource]:
+    if snap is None and not path:
+        snap = live().snapshot(include_devices=False)
+    sources = hearing.find_sources(None if path else snap, track, slot, bar, path)
     if one and len(sources) > 1:
         raise hearing.HearingError(
             f"Track {track} has {len(sources)} audio files; pick one with slot (Session) or bar "
@@ -375,8 +376,8 @@ def audio_to_midi(track: int | None = None, slot: int | None = None, bar: float 
     quantize snaps to a grid in beats (0.25 = 1/16, 0 = off). onset and frame (0 to 1)
     make detection stricter when higher; min_note_ms drops short blips."""
     try:
-        [source] = _sources(track, slot, bar, path, one=True)
-        snap = live().snapshot(include_devices=False) if add_to_live else None
+        snap = live().snapshot(include_devices=False) if add_to_live or not path else None
+        [source] = _sources(track, slot, bar, path, one=True, snap=snap)
         set_tempo = snap["tempo"] if snap else None
         bpb = beats_per_bar(snap) if snap else 4.0
         result = hearing.audio_to_midi(audio(), source, bpm=bpm, set_tempo=set_tempo,
@@ -420,7 +421,7 @@ def tag_loop_roles(track: int | None = None, slot: int | None = None, path: str 
     (Demucs on the PC), pitch and key; a few seconds per new loop, cached after."""
     try:
         snap = None if path else live().snapshot(include_devices=False)
-        sources = hearing.find_sources(snap, track, slot, None, path)
+        sources = _sources(track, slot, None, path, snap=snap)
         if only_unclear and track is None and path is None:
             sources = [s for s in sources if not hearing.roles.name_kind(s.track_name, s.clip_name)]
             if not sources:
@@ -439,6 +440,21 @@ def tag_loop_roles(track: int | None = None, slot: int | None = None, path: str 
         for item in result["loops"]:
             item.pop("_verdict", None)
         return _dump(result)
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def detect_sections(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                    path: str | None = None) -> str:
+    """Find the sections of a song or long recording (intro, verse, chorus, break, outro...),
+    with start times, bars from the first downbeat and an energy per section. Meant for
+    reference tracks: pass path, or pick a clip like analyze_audio. Says so plainly if the
+    analysis service doesn't offer sections yet."""
+    try:
+        snap = None if path else live().snapshot(include_devices=False)
+        [source] = _sources(track, slot, bar, path, one=True, snap=snap)
+        return _dump(hearing.sections(audio(), source, beats_per_bar(snap) if snap else 4.0))
     except HEARING_ERRORS as e:
         return _error(e)
 

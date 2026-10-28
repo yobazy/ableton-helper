@@ -472,6 +472,47 @@ def rename_ops(snapshot: dict[str, Any], verdicts: dict[int, roles.Verdict],
     return ops, done
 
 
+# ── sections (when the service has them) ─────────────────────────────────────
+
+SECTIONS_MISSING = ("The audio analysis service on the PC doesn't offer song sections yet "
+                    "(no 'sections' in its /health features). They're being added to "
+                    "audio-analysis; once it's redeployed this works with no change here.")
+
+
+def sections(service: AudioService, source: AudioSource, beats_per_bar: float = 4.0) -> dict[str, Any]:
+    """Song structure from /v1/sections, with each segment's start as a bar counted from
+    the first downbeat."""
+    if not service.has_feature("sections"):
+        return {"available": False, "source": source.label, "why": SECTIONS_MISSING}
+    try:
+        data = service.sections(source.path)
+    except AudioServiceUnavailable:
+        raise
+    except AudioServiceError as e:
+        if e.status == 404 and e.code is None:  # the route itself is missing
+            return {"available": False, "source": source.label, "why": SECTIONS_MISSING}
+        raise
+    bpm = data.get("bpm") or 0
+    downbeats = data.get("downbeats") or []
+    first = downbeats[0] if downbeats else 0.0
+    sec_per_bar = 60.0 * beats_per_bar / bpm if bpm else None
+    segments = []
+    for s in data.get("segments") or []:
+        seg = {"label": s.get("label"), "start_s": s.get("start"), "end_s": s.get("end"),
+               "energy": s.get("energy"), "loudness_lufs": s.get("loudness_lufs")}
+        if sec_per_bar:
+            seg["bar"] = round((s["start"] - first) / sec_per_bar + 1, 1)
+            seg["bars"] = round((s["end"] - s["start"]) / sec_per_bar, 1)
+        segments.append({k: v for k, v in seg.items() if v is not None})
+    out = {"available": True, "source": source.label, **source.to_dict(), "bpm": bpm,
+           "first_downbeat_s": first, "segments": segments,
+           "labels": "allin1's: intro, verse, chorus, bridge, break, inst, solo, outro (start and end "
+                     "are silence). There is no 'drop': use energy to tell a drop from a breakdown."}
+    if data.get("partial"):
+        out["partial"] = True
+    return out
+
+
 def script_supports_session_clips(ping: dict[str, Any]) -> bool:
     try:
         version = tuple(int(x) for x in str(ping.get("version", "0")).split(".")[:3])

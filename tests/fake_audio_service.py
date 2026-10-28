@@ -44,6 +44,7 @@ class FakeAudioService(AudioService):
         self.transcriptions: dict[str, list[dict[str, Any]]] = {}
         self.text_vectors: dict[str, list[float]] = {}
         self.sections_answer: dict[str, Any] | None = None
+        self.sections_route_missing = False
         self.files: dict[str, bytes] = {}
         self.stem_audio: dict[str, dict[str, bytes]] = {}  # file stem → stem name → WAV bytes
         self.down = False
@@ -64,7 +65,7 @@ class FakeAudioService(AudioService):
         if path == "/v1/embed/text":
             texts = json.loads(body)["texts"]
             return self._json({"vectors": [self.text_vectors.get(t, [0.0, 0.0, 1.0]) for t in texts]})
-        if path == "/v1/sections" and "sections" not in self.features:
+        if path == "/v1/sections" and ("sections" not in self.features or self.sections_route_missing):
             return self._json({"detail": "Not Found"}, 404)
         if kind == "multipart":
             fields, data, filename = _parse_multipart(body, content_type)
