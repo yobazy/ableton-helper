@@ -407,6 +407,42 @@ def audio_to_midi(track: int | None = None, slot: int | None = None, bar: float 
         return _error(e)
 
 
+@mcp.tool()
+def tag_loop_roles(track: int | None = None, slot: int | None = None, path: str | None = None,
+                   only_unclear: bool = True, rename_tracks: bool = False,
+                   use_stems: bool = True) -> str:
+    """Listen to loops and say what each one is (kick, clap, hats, perc, drums, bass,
+    chords, pad, lead, vocal, fx), with a confidence and the reason. With nothing picked
+    it covers the set's audio clips whose track and clip names don't already say
+    (only_unclear=False: all of them); or pick a track, a track + slot, or a path.
+    rename_tracks=True renames those tracks to e.g. "Bass (Audio 7)" in one undo step, so
+    match_roles and arrange_session can place them; tell the producer first. Uses stems
+    (Demucs on the PC), pitch and key; a few seconds per new loop, cached after."""
+    try:
+        snap = None if path else live().snapshot(include_devices=False)
+        sources = hearing.find_sources(snap, track, slot, None, path)
+        if only_unclear and track is None and path is None:
+            sources = [s for s in sources if not hearing.roles.name_kind(s.track_name, s.clip_name)]
+            if not sources:
+                return _dump({"loops": [], "note": "Every audio track's name already says what it is. "
+                                                   "Pass only_unclear=False to listen anyway."})
+        result = hearing.tag_roles(audio(), sources, use_stems=use_stems)
+        if rename_tracks and snap is not None:
+            ops, renamed = hearing.rename_ops(snap, hearing.track_roles(result["loops"]))
+            if ops:
+                ran = live().run_ops(ops)
+                result["renamed"] = renamed
+                if ran["errors"]:
+                    result["rename_errors"] = ran["errors"]
+            else:
+                result["renamed"] = []
+        for item in result["loops"]:
+            item.pop("_verdict", None)
+        return _dump(result)
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
 def main() -> None:
     mcp.run()
 

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import roles
 from .audio_service import AudioService, AudioServiceError, AudioServiceUnavailable
 from .plan import beats_per_bar
 
@@ -372,6 +373,103 @@ def midi_clip_ops(source: AudioSource, notes: list[dict[str, Any]], length: floa
         ops.append({"op": "create_midi_clip", "track": "midi", "start": (float(at_bar) - 1) * beats_per_bar,
                     "length": length, "name": title, "notes": notes})
     return ops
+
+
+def clap_prompt_vectors(service: AudioService) -> dict[str, list[list[float]]] | None:
+    """Prompt vectors per role, or None when the service's CLAP looks broken."""
+    if not roles.clap_is_healthy(service.embed_text(list(roles.CLAP_HEALTH_PAIR))):
+        return None
+    texts = [t for ps in roles.CLAP_PROMPTS.values() for t in ps]
+    vectors = dict(zip(texts, service.embed_text(texts)))
+    return {k: [vectors[t] for t in ps] for k, ps in roles.CLAP_PROMPTS.items()}
+
+
+def role_features(service: AudioService, source: AudioSource, use_stems: bool = True,
+                  clap_prompts: dict[str, list[list[float]]] | None = None) -> roles.Features:
+    features = ["bpm", "key", "loudness"] + (["embedding"] if clap_prompts else [])
+    data = service.analyze(source.path, features)
+    res = data["results"]
+    f = roles.Features(duration=data.get("duration"),
+                       name_kind=roles.name_kind(source.track_name, source.clip_name, Path(source.path).stem))
+    if "error" not in res.get("bpm", {"error": 1}):
+        f.bpm = res["bpm"].get("bpm")
+    if "error" not in res.get("key", {"error": 1}):
+        f.key_strength = res["key"].get("strength", res["key"].get("confidence"))
+    if "error" not in res.get("loudness", {"error": 1}):
+        f.movement_lu = energy_summary(res["loudness"]).get("movement_lu")
+    emb = res.get("embedding")
+    if clap_prompts and emb and "error" not in emb and emb.get("vector"):
+        f.clap = roles.clap_probs(emb["vector"], clap_prompts)
+    f.notes = service.transcribe(source.path)["notes"]
+    if use_stems:
+        stem_files = service.stems(source.path, model="htdemucs", fmt="wav")["stems"]
+        energies = {}
+        for name, p in stem_files.items():
+            samples, rate = roles.read_wav_mono(p)
+            energies[name] = roles.energy(samples)
+            if name == "drums":
+                f.drum_bands = roles.bands(samples, rate)
+        total = sum(energies.values())
+        if total > 0:
+            f.stem_share = {k: v / total for k, v in energies.items()}
+    return f
+
+
+def tag_roles(service: AudioService, sources: list[AudioSource], use_stems: bool = True) -> dict[str, Any]:
+    picked, skipped = limit(sources)
+    clap_prompts = clap_prompt_vectors(service)
+    items = []
+    for s in picked:
+        try:
+            verdict = roles.score(role_features(service, s, use_stems, clap_prompts))
+            items.append({"source": s.label, **s.to_dict(), **verdict.to_dict(), "_verdict": verdict})
+        except AudioServiceUnavailable:
+            raise
+        except (AudioServiceError, ValueError, OSError) as e:
+            items.append({"source": s.label, **s.to_dict(), "error": str(e)})
+    out: dict[str, Any] = {"loops": items,
+                           "listened_with": ("stems, " if use_stems else "") + "pitch, key"
+                                            + (", CLAP" if clap_prompts else "")}
+    if not clap_prompts:
+        out["clap"] = ("Skipped: the service's CLAP embeddings look broken (unrelated texts come back "
+                       "nearly identical), so roles come from stems, pitch and key only.")
+    if skipped:
+        out["skipped"] = f"{skipped} more files not tagged (limit {MAX_FILES} per call); ask per track."
+    return out
+
+
+def track_roles(items: list[dict[str, Any]]) -> dict[int, roles.Verdict]:
+    """One verdict per track: average the probabilities of its loops."""
+    by_track: dict[int, list[roles.Verdict]] = {}
+    for it in items:
+        if it.get("track") is not None and "_verdict" in it:
+            by_track.setdefault(it["track"], []).append(it["_verdict"])
+    out = {}
+    for track, verdicts in by_track.items():
+        mean = {k: sum(v.scores[k] for v in verdicts) / len(verdicts) for k in roles.KINDS}
+        ranked = sorted(mean.items(), key=lambda kv: -kv[1])
+        best = max(verdicts, key=lambda v: v.scores[ranked[0][0]])
+        out[track] = roles.Verdict(ranked[0][0], ranked[0][1], best.reason, ranked[1][0], mean)
+    return out
+
+
+ROLE_LABELS = {"kick": "Kick", "clap": "Clap", "hats": "Hats", "perc": "Perc", "drums": "Drums",
+               "bass": "Bass", "chords": "Chords", "pad": "Pad", "lead": "Lead", "vocal": "Vocal", "fx": "FX"}
+
+
+def rename_ops(snapshot: dict[str, Any], verdicts: dict[int, roles.Verdict],
+               min_confidence: float = 0.35) -> tuple[list[dict[str, Any]], list[str]]:
+    """Rename tracks whose names say nothing ("Audio 7" → "Bass (Audio 7)") so match_roles
+    can place them. Tracks whose names already mean something are left alone."""
+    ops, done = [], []
+    for t in snapshot["tracks"]:
+        v = verdicts.get(t["index"])
+        if v is None or v.confidence < min_confidence or roles.name_kind(t["name"]):
+            continue
+        new = f"{ROLE_LABELS[v.kind]} ({t['name']})"
+        ops.append({"op": "set_track", "track": t["index"], "name": new})
+        done.append(f"track {t['index']}: '{t['name']}' → '{new}'")
+    return ops, done
 
 
 def script_supports_session_clips(ping: dict[str, Any]) -> bool:

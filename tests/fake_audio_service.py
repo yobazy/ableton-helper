@@ -45,6 +45,7 @@ class FakeAudioService(AudioService):
         self.text_vectors: dict[str, list[float]] = {}
         self.sections_answer: dict[str, Any] | None = None
         self.files: dict[str, bytes] = {}
+        self.stem_audio: dict[str, dict[str, bytes]] = {}  # file stem → stem name → WAV bytes
         self.down = False
 
     def _request(self, method, path, *, body=None, content_type=None, timeout=60.0):
@@ -92,7 +93,7 @@ class FakeAudioService(AudioService):
             urls = {}
             for name in ("drums", "bass", "other", "vocals"):
                 url = f"/v1/stems/{sha}/{model}/{name}.wav"
-                self.files[url] = f"{name} of {stem}".encode()
+                self.files[url] = self.stem_audio.get(stem, {}).get(name, f"{name} of {stem}".encode())
                 urls[name] = url
             return self._json({"audio": sha, "model": model, "sample_rate": 44100, "stems": urls})
         if path == "/v1/transcribe":
