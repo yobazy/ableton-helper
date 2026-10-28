@@ -8,7 +8,9 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from . import hearing
 from . import templates as tpl
+from .audio_service import AudioService, AudioServiceError
 from .connection import LiveConnection, LiveError
 from .matching import match_roles as _match_roles
 from .plan import PlanError, compile_plan, session_plan, skeleton_plan
@@ -32,7 +34,10 @@ Rules:
   on a set that already has an arrangement.
 - Each build is one batch; tell the producer they can undo it in Live (Cmd+Z) if they
   don't like it.
-- You can't hear audio. Use track and clip names, MIDI note data, and ask the producer.
+- You can hear audio clips through the analysis service on the home PC: analyze_audio
+  (BPM, key, loudness, energy), audio_spectrogram (look at it), separate_stems,
+  audio_to_midi and tag_loop_roles (what a badly named loop is). MIDI clips have no
+  audio file; use their notes. If the PC is off, say so and carry on with names and notes.
 """
 
 mcp = FastMCP("ableton-helper", instructions=INSTRUCTIONS)
@@ -44,6 +49,30 @@ def live() -> LiveConnection:
     if _live is None:
         _live = LiveConnection()
     return _live
+
+
+_audio: AudioService | None = None
+
+
+def audio() -> AudioService:
+    global _audio
+    if _audio is None:
+        _audio = AudioService()
+    return _audio
+
+
+def _sources(track: int | None, slot: int | None, bar: float | None, path: str | None,
+             one: bool = False) -> list[hearing.AudioSource]:
+    snap = None if path else live().snapshot(include_devices=False)
+    sources = hearing.find_sources(snap, track, slot, bar, path)
+    if one and len(sources) > 1:
+        raise hearing.HearingError(
+            f"Track {track} has {len(sources)} audio files; pick one with slot (Session) or bar "
+            f"(Arrangement): " + "; ".join(s.label for s in sources[:8]))
+    return sources
+
+
+HEARING_ERRORS = (hearing.HearingError, AudioServiceError, LiveError)
 
 
 def _dump(data: Any) -> str:
@@ -282,6 +311,22 @@ def get_clip_notes(track: int, slot: int) -> str:
     try:
         return _dump(live().send("clip_notes", {"track": track, "slot": slot}))
     except LiveError as e:
+        return _error(e)
+
+
+# ── hearing (audio analysis service on the home PC) ──────────────────────────
+
+@mcp.tool()
+def analyze_audio(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                  path: str | None = None, tags: bool = False) -> str:
+    """Listen to audio and report BPM, key (with Camelot), loudness (LUFS) and an energy
+    curve. Pick the audio as: track + slot (a Session clip), track + bar (the Arrangement
+    clip at that bar), track alone (every audio file on the track), or path (any file).
+    tags=True adds genre and mood tags. Results are cached by file hash, so asking again
+    is instant. Needs the home PC; MIDI clips have no audio to analyse."""
+    try:
+        return _dump(hearing.analyze(audio(), _sources(track, slot, bar, path), tags=tags))
+    except HEARING_ERRORS as e:
         return _error(e)
 
 
