@@ -140,6 +140,14 @@ transitions:
 
 ### Phase 3 — Audio analysis ("let the AI hear")
 
+**Progress (2026-10-28):** 3.1 is done as thin MCP tools over the shared audio-analysis
+service on the home PC (not a service inside this repo): `analyze_audio`,
+`audio_spectrogram`, `separate_stems`, `audio_to_midi` (with `add_to_live`) and
+`detect_sections` (waits for the service's `/v1/sections`). A first cut of 3.3 is in too:
+`tag_loop_roles` names a loop's role from stems, pitch and key, and can rename unclear
+tracks so `match_roles` uses it. Notes: [docs/PROGRESS-phase-3-1.md](docs/PROGRESS-phase-3-1.md).
+The SPEC's "on this Mac" acceptance doesn't apply as written: the models run on the PC's GPU.
+
 **3.1 Analysis service**
 - A local Python service exposed as extra MCP tools:
   - `analyze_audio(path)` returns key, BPM, loudness, and an energy curve (librosa/Essentia), plus timbre tags (CLAP/Essentia models).
