@@ -240,3 +240,21 @@ def spectrogram(service: AudioService, source: AudioSource, start: float | None 
             "reading_it": "Mel spectrogram: time left to right, low to high frequency bottom to top, "
                           "brighter is louder. Kicks are short bright columns at the bottom, hats "
                           "thin ticks at the top, pads and chords long horizontal bands."}
+
+
+# ── stems ────────────────────────────────────────────────────────────────────
+
+STEM_MODELS = {"htdemucs": "drums, bass, other, vocals", "htdemucs_ft": "the same, finer and 4x slower",
+               "htdemucs_6s": "adds guitar and piano"}
+
+
+def stems(service: AudioService, source: AudioSource, model: str = "htdemucs", fmt: str = "flac") -> dict[str, Any]:
+    if model not in STEM_MODELS:
+        raise HearingError("model is one of: " +"; ".join(f"{k} ({v})" for k, v in STEM_MODELS.items()))
+    if fmt not in ("flac", "wav"):
+        raise HearingError("format is flac or wav.")
+    result = service.stems(source.path, model=model, fmt=fmt)
+    return {"source": source.label, **source.to_dict(), "model": result["model"],
+            "sample_rate": result.get("sample_rate"), "stems": result["stems"],
+            "cached": result.get("cached", False),
+            "next": "Drag the files into Live, or analyse one with analyze_audio(path=...)."}

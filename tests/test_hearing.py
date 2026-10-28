@@ -213,3 +213,33 @@ def test_spectrogram_checks_sizes(svc, snapshot):
     [source] = hearing.find_sources(snapshot, track=1, slot=0)
     with pytest.raises(hearing.HearingError, match="width"):
         hearing.spectrogram(svc, source, width=10)
+
+
+# ── stems ────────────────────────────────────────────────────────────────────
+
+def test_stems_are_downloaded_and_cached(svc, snapshot):
+    [source] = hearing.find_sources(snapshot, track=1, slot=0)
+    out = hearing.stems(svc, source)
+    assert set(out["stems"]) == {"drums", "bass", "other", "vocals"}
+    with open(out["stems"]["bass"], "rb") as f:
+        assert f.read() == b"bass of Audio 7"
+    assert out["cached"] is False
+    svc.calls.clear()
+    again = hearing.stems(svc, source)
+    assert again["cached"] is True and svc.calls == []
+
+
+def test_stems_redownload_when_a_file_is_gone(svc, snapshot):
+    import os
+    [source] = hearing.find_sources(snapshot, track=1, slot=0)
+    out = hearing.stems(svc, source)
+    os.remove(out["stems"]["drums"])
+    assert hearing.stems(svc, source)["cached"] is False
+
+
+def test_stems_options(svc, snapshot):
+    [source] = hearing.find_sources(snapshot, track=1, slot=0)
+    with pytest.raises(hearing.HearingError, match="htdemucs_6s"):
+        hearing.stems(svc, source, model="spleeter")
+    with pytest.raises(hearing.HearingError, match="flac or wav"):
+        hearing.stems(svc, source, fmt="mp3")

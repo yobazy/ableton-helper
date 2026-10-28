@@ -347,6 +347,20 @@ def audio_spectrogram(track: int | None = None, slot: int | None = None, bar: fl
         return _error(e)
 
 
+@mcp.tool()
+def separate_stems(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                   path: str | None = None, model: str = "htdemucs", format: str = "flac") -> str:
+    """Split one audio clip or file into stems with Demucs and download them to this
+    machine. Returns the local file paths per stem (drums, bass, other, vocals; the
+    htdemucs_6s model adds guitar and piano). Pick the audio like analyze_audio. Takes
+    seconds on the PC's GPU, longer if the GPU is busy. Cached by file hash."""
+    try:
+        [source] = _sources(track, slot, bar, path, one=True)
+        return _dump(hearing.stems(audio(), source, model, format))
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
 def main() -> None:
     mcp.run()
 
