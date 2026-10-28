@@ -29,6 +29,10 @@ CACHE_DIR = Path(os.environ.get("ABLETON_HELPER_CACHE", Path.home() / ".cache" /
 TIMEOUTS = {"health": 4.0, "analyze": 180.0, "spectrogram": 90.0, "transcribe": 180.0,
             "stems": 900.0, "sections": 300.0, "embed_text": 120.0, "download": 120.0}
 
+# CLAP vectors stay on the service (which caches them too): on 2026-10-28 they were
+# broken there, and a local copy would outlive the fix.
+NOT_CACHED_LOCALLY = {"embedding"}
+
 UNREACHABLE = (
     "Can't reach the audio analysis service at {url} ({why}). It runs on the home PC "
     "('pc'): check that the PC is on and that this machine is on Tailscale. Analysis is "
@@ -214,7 +218,7 @@ class AudioService:
         local: list[str] = []
         meta = self._cached_json(sha, "meta.json") or {}
         for f in features:
-            hit = self._cached_json(sha, f"analyze-{f}-{tag}.json")
+            hit = None if f in NOT_CACHED_LOCALLY else self._cached_json(sha, f"analyze-{f}-{tag}.json")
             if hit is not None:
                 results[f] = hit
                 local.append(f)
@@ -227,6 +231,8 @@ class AudioService:
             for f in missing:
                 r = (data.get("results") or {}).get(f, {"error": "No answer"})
                 results[f] = r
+                if f in NOT_CACHED_LOCALLY:
+                    continue
                 if isinstance(r, dict) and "error" not in r and not r.get("partial"):
                     self._store_json(sha, f"analyze-{f}-{tag}.json", r)
             if data.get("duration"):
@@ -300,12 +306,13 @@ class AudioService:
             self._store_json(sha, "sections.json", data)
         return data
 
-    def embed_text(self, texts: list[str]) -> list[list[float]]:
-        """CLAP text vectors, in the same space as the audio ``embedding`` feature. Cached by text."""
+    def embed_text(self, texts: list[str], use_cache: bool = True) -> list[list[float]]:
+        """CLAP text vectors, in the same space as the audio ``embedding`` feature. Cached by
+        text; ``use_cache=False`` asks the service fresh (and doesn't store the answer)."""
         out: dict[str, list[float]] = {}
         cache_file = self.cache_dir / "text-embeddings.json"
         cache: dict[str, list[float]] = {}
-        if cache_file.is_file():
+        if use_cache and cache_file.is_file():
             try:
                 cache = json.loads(cache_file.read_text())
             except ValueError:
@@ -321,7 +328,7 @@ class AudioService:
             if len(vectors) != len(batch):
                 raise AudioServiceError("Text embedding answer had the wrong number of vectors.", code="bad_reply")
             cache.update(zip(batch, vectors))
-        if missing:
+        if missing and use_cache:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             cache_file.write_text(json.dumps(cache))
         for t in texts:

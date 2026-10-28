@@ -67,9 +67,10 @@ def _sources(track: int | None, slot: int | None, bar: float | None, path: str |
         snap = live().snapshot(include_devices=False)
     sources = hearing.find_sources(None if path else snap, track, slot, bar, path)
     if one and len(sources) > 1:
+        where = f"Track {track} has" if track is not None else "The set has"
         raise hearing.HearingError(
-            f"Track {track} has {len(sources)} audio files; pick one with slot (Session) or bar "
-            f"(Arrangement): " + "; ".join(s.label for s in sources[:8]))
+            f"{where} {len(sources)} audio files and this works on one; pick it with track + slot "
+            f"(Session), track + bar (Arrangement) or path: " + "; ".join(s.label for s in sources[:8]))
     return sources
 
 

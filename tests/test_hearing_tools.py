@@ -91,7 +91,8 @@ def test_one_file_tools_want_one_file(live, svc):
     song_track.arrangement_clips.append(FakeClip("other", 8.0, midi=False, start_time=32.0,
                                                  file_path=live.song.tracks[1].clip_slots[0].clip.file_path))
     text = server.separate_stems(track=2)
-    assert text.startswith("Error:") and "pick one" in text
+    assert text.startswith("Error:") and "works on one" in text
+    assert "The set has" in server.audio_spectrogram()
 
 
 def test_spectrogram_tool_returns_an_image(live, svc):

@@ -94,6 +94,18 @@ def test_errors_are_not_cached(svc, files):
     assert svc.analyze(files["Audio 7"], ["bpm"])["results"]["bpm"]["bpm"] == 124.02
 
 
+def test_clap_vectors_are_never_stale(svc, files):
+    svc.answers["Audio 7"] = {"embedding": {"vector": [1.0, 0.0]}}
+    svc.analyze(files["Audio 7"], ["embedding"])
+    svc.calls.clear()
+    svc.analyze(files["Audio 7"], ["embedding"])
+    assert len(svc.calls) == 1  # asked again: embeddings aren't cached on this side
+    svc.embed_text(["a kick drum loop"], use_cache=False)
+    svc.calls.clear()
+    svc.embed_text(["a kick drum loop"], use_cache=False)
+    assert len(svc.calls) == 1
+
+
 def test_unreachable_service_says_so_plainly(tmp_path, files):
     real = AudioService("http://127.0.0.1:9", tmp_path / "cache")  # discard port: nothing listens
     with pytest.raises(AudioServiceUnavailable, match="home PC"):
@@ -154,6 +166,8 @@ def test_bad_addresses(snapshot):
         hearing.find_sources(snapshot, track=3, bar=99)
     with pytest.raises(hearing.HearingError, match="No file"):
         hearing.find_sources(None, path="/nowhere/at/all.wav")
+    with pytest.raises(hearing.HearingError, match="need a track"):
+        hearing.find_sources(snapshot, slot=0)
 
 
 # ── analyze ──────────────────────────────────────────────────────────────────

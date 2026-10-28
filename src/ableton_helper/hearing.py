@@ -77,6 +77,8 @@ def find_sources(snapshot: dict[str, Any] | None, track: int | None = None, slot
         return [AudioSource(str(p))]
     if snapshot is None:
         raise HearingError("Give a track (and slot or bar) or a file path.")
+    if track is None and (slot is not None or bar is not None):
+        raise HearingError("slot and bar need a track too.")
     bpb = beats_per_bar(snapshot)
     if track is not None:
         t = _track(snapshot, track)
@@ -338,6 +340,8 @@ def audio_to_midi(service: AudioService, source: AudioSource, bpm: float | None 
                   set_tempo: float | None = None, quantize: float | None = 0.25,
                   beats_per_bar: float = 4.0, onset: float | None = None, frame: float | None = None,
                   min_note_ms: float | None = None) -> dict[str, Any]:
+    if quantize is not None and quantize < 0:
+        raise HearingError("quantize is a grid in beats (0.25 = 1/16), or 0 for none.")
     result = service.transcribe(source.path, onset=onset, frame=frame, min_note_ms=min_note_ms)
     tempo, tempo_from = tempo_for(service, source, bpm, set_tempo)
     notes = notes_to_beats(result["notes"], tempo, quantize)
@@ -377,7 +381,8 @@ def midi_clip_ops(source: AudioSource, notes: list[dict[str, Any]], length: floa
 
 def clap_prompt_vectors(service: AudioService) -> dict[str, list[list[float]]] | None:
     """Prompt vectors per role, or None when the service's CLAP looks broken."""
-    if not roles.clap_is_healthy(service.embed_text(list(roles.CLAP_HEALTH_PAIR))):
+    # Always fresh: a cached broken answer would keep CLAP off after the service is fixed.
+    if not roles.clap_is_healthy(service.embed_text(list(roles.CLAP_HEALTH_PAIR), use_cache=False)):
         return None
     texts = [t for ps in roles.CLAP_PROMPTS.values() for t in ps]
     vectors = dict(zip(texts, service.embed_text(texts)))
