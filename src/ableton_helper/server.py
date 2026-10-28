@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
 from . import hearing
 from . import templates as tpl
@@ -326,6 +326,23 @@ def analyze_audio(track: int | None = None, slot: int | None = None, bar: float 
     is instant. Needs the home PC; MIDI clips have no audio to analyse."""
     try:
         return _dump(hearing.analyze(audio(), _sources(track, slot, bar, path), tags=tags))
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def audio_spectrogram(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                      path: str | None = None, start: float | None = None,
+                      duration: float | None = None, width: int | None = None,
+                      height: int | None = None):
+    """Show a mel spectrogram of one audio clip or file as an image you can look at
+    (time left to right, frequency bottom to top). Pick the audio like analyze_audio
+    (track + slot, track + bar, or path). start and duration are in seconds; width and
+    height in pixels (default 1200 x 400). Also returns the PNG's path in the cache."""
+    try:
+        [source] = _sources(track, slot, bar, path, one=True)
+        info = hearing.spectrogram(audio(), source, start, duration, width, height)
+        return [_dump(info), Image(path=info["image"])]
     except HEARING_ERRORS as e:
         return _error(e)
 

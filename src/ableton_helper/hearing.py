@@ -226,3 +226,17 @@ def analyze(service: AudioService, sources: list[AudioSource], tags: bool = Fals
                     "gains, so treat it as a hint. A key with low confidence or strength usually "
                     "means drums or noise rather than a tonal part.")
     return out
+
+
+# ── spectrogram ──────────────────────────────────────────────────────────────
+
+def spectrogram(service: AudioService, source: AudioSource, start: float | None = None,
+                duration: float | None = None, width: int | None = None,
+                height: int | None = None) -> dict[str, Any]:
+    if (width is not None and not 200 <= width <= 4000) or (height is not None and not 100 <= height <= 2000):
+        raise HearingError("width is 200 to 4000 px and height 100 to 2000 px.")
+    png = service.spectrogram(source.path, start=start, duration=duration, width=width, height=height)
+    return {"source": source.label, **source.to_dict(), "image": str(png),
+            "reading_it": "Mel spectrogram: time left to right, low to high frequency bottom to top, "
+                          "brighter is louder. Kicks are short bright columns at the bottom, hats "
+                          "thin ticks at the top, pads and chords long horizontal bands."}

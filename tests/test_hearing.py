@@ -193,3 +193,23 @@ def test_energy_curve_is_squashed_in_power():
     mixed, _ = hearing.squash_curve([-10.0, -20.0], points=1)
     assert mixed[0] == -12.6  # mean power, not mean dB (-15)
     assert hearing.energy_level(-20) == "low" and hearing.energy_level(-14) == "medium"
+
+
+# ── spectrogram ──────────────────────────────────────────────────────────────
+
+def test_spectrogram_is_a_cached_png(svc, snapshot):
+    [source] = hearing.find_sources(snapshot, track=1, slot=0)
+    info = hearing.spectrogram(svc, source, width=600, height=200)
+    with open(info["image"], "rb") as f:
+        assert f.read(4) == b"\x89PNG"
+    svc.calls.clear()
+    assert hearing.spectrogram(svc, source, width=600, height=200)["image"] == info["image"]
+    assert svc.calls == []
+    # Other options are another image.
+    assert hearing.spectrogram(svc, source, start=1.0, duration=2.0)["image"] != info["image"]
+
+
+def test_spectrogram_checks_sizes(svc, snapshot):
+    [source] = hearing.find_sources(snapshot, track=1, slot=0)
+    with pytest.raises(hearing.HearingError, match="width"):
+        hearing.spectrogram(svc, source, width=10)
