@@ -258,3 +258,125 @@ def stems(service: AudioService, source: AudioSource, model: str = "htdemucs", f
             "sample_rate": result.get("sample_rate"), "stems": result["stems"],
             "cached": result.get("cached", False),
             "next": "Drag the files into Live, or analyse one with analyze_audio(path=...)."}
+
+
+# ── audio to MIDI ────────────────────────────────────────────────────────────
+
+SESSION_CLIP_SCRIPT_VERSION = (0, 2, 0)
+MIDI_COLOR = 0x7B61FF
+
+
+def notes_to_beats(notes: list[dict[str, Any]], bpm: float, quantize: float | None = 0.25) -> list[dict[str, Any]]:
+    """basic-pitch notes (seconds, velocity 0..1) → Live notes (beats, velocity 1..127).
+    ``quantize`` snaps starts and lengths to a grid in beats (0.25 = 1/16); 0 or None leaves them."""
+    per_second = bpm / 60.0
+    out: dict[tuple[int, float], dict[str, Any]] = {}
+    for n in notes:
+        start = float(n["start"]) * per_second
+        length = max(0.0, float(n["end"]) - float(n["start"])) * per_second
+        if quantize:
+            start = round(start / quantize) * quantize
+            length = max(quantize, round(length / quantize) * quantize)
+        elif length <= 0:
+            continue
+        velocity = max(1, min(127, int(round(float(n.get("velocity", 0.8)) * 127))))
+        note = {"pitch": int(n["pitch"]), "start_time": round(start, 4), "duration": round(length, 4),
+                "velocity": velocity}
+        key = (note["pitch"], note["start_time"])
+        # Quantising can land two notes on one spot; keep the longer.
+        if key not in out or out[key]["duration"] < note["duration"]:
+            out[key] = note
+    return sorted(out.values(), key=lambda n: (n["start_time"], n["pitch"]))
+
+
+def fit_to_length(notes: list[dict[str, Any]], length: float) -> tuple[list[dict[str, Any]], int]:
+    kept, dropped = [], 0
+    for n in notes:
+        if n["start_time"] >= length - 1e-6:
+            dropped += 1
+            continue
+        kept.append({**n, "duration": min(n["duration"], length - n["start_time"])})
+    return kept, dropped
+
+
+def midi_summary(notes: list[dict[str, Any]]) -> dict[str, Any]:
+    if not notes:
+        return {"note_count": 0}
+    pitches = [n["pitch"] for n in notes]
+    return {"note_count": len(notes), "lowest": note_name(min(pitches)), "highest": note_name(max(pitches)),
+            "distinct_pitches": len(set(pitches)), "lowest_midi": min(pitches), "highest_midi": max(pitches)}
+
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def note_name(pitch: int) -> str:
+    return f"{NOTE_NAMES[pitch % 12]}{pitch // 12 - 2}"  # Live's naming: 60 = C3
+
+
+def tempo_for(service: AudioService, source: AudioSource, bpm: float | None,
+              set_tempo: float | None) -> tuple[float, str]:
+    """The tempo the file was played at: given, else detected, else the set's."""
+    if bpm:
+        return float(bpm), "given"
+    try:
+        detected = service.analyze(source.path, ["bpm"])["results"].get("bpm") or {}
+    except AudioServiceUnavailable:
+        raise
+    except AudioServiceError:
+        detected = {}
+    if "error" not in detected and detected.get("bpm") and \
+            (detected.get("confidence", 1) >= 0.5 or set_tempo is None):
+        return float(detected.get("bpm_rounded") or detected["bpm"]), "detected in the file"
+    if set_tempo:
+        return float(set_tempo), "the set's tempo (detection was unsure)"
+    raise HearingError("Couldn't tell the file's tempo; pass bpm.")
+
+
+def audio_to_midi(service: AudioService, source: AudioSource, bpm: float | None = None,
+                  set_tempo: float | None = None, quantize: float | None = 0.25,
+                  beats_per_bar: float = 4.0, onset: float | None = None, frame: float | None = None,
+                  min_note_ms: float | None = None) -> dict[str, Any]:
+    result = service.transcribe(source.path, onset=onset, frame=frame, min_note_ms=min_note_ms)
+    tempo, tempo_from = tempo_for(service, source, bpm, set_tempo)
+    notes = notes_to_beats(result["notes"], tempo, quantize)
+    if source.length_beats:
+        length = float(source.length_beats)
+    else:
+        end = max((n["start_time"] + n["duration"] for n in notes), default=0.0)
+        length = max(1, math.ceil(end / beats_per_bar - 1e-6)) * beats_per_bar
+    notes, dropped = fit_to_length(notes, length)
+    out = {"source": source.label, **source.to_dict(), "midi_file": result.get("midi_path"),
+           "tempo": tempo, "tempo_from": tempo_from, "quantize_beats": quantize or None,
+           "clip_bars": round(length / beats_per_bar, 2), **midi_summary(notes),
+           "cached": result.get("cached", False)}
+    if dropped:
+        out["dropped_past_clip_end"] = dropped
+    out["_notes"] = notes
+    out["_length"] = length
+    return out
+
+
+def midi_clip_ops(source: AudioSource, notes: list[dict[str, Any]], length: float,
+                  at_bar: float | None, beats_per_bar: float, name: str | None = None) -> list[dict[str, Any]]:
+    """Ops for a new MIDI track right after the source track, holding the notes in a Session
+    clip (slot 0), or in an Arrangement clip at ``at_bar``."""
+    title = name or f"{source.clip_name or Path(source.path).stem} (MIDI)"
+    index = source.track + 1 if source.track is not None else -1
+    ops: list[dict[str, Any]] = [{"op": "create_track", "type": "midi", "name": title, "ref": "midi",
+                                  "index": index, "color": MIDI_COLOR}]
+    if at_bar is None:
+        ops.append({"op": "create_session_midi_clip", "track": "midi", "slot": 0, "length": length,
+                    "name": title, "notes": notes})
+    else:
+        ops.append({"op": "create_midi_clip", "track": "midi", "start": (float(at_bar) - 1) * beats_per_bar,
+                    "length": length, "name": title, "notes": notes})
+    return ops
+
+
+def script_supports_session_clips(ping: dict[str, Any]) -> bool:
+    try:
+        version = tuple(int(x) for x in str(ping.get("version", "0")).split(".")[:3])
+    except ValueError:
+        return False
+    return version >= SESSION_CLIP_SCRIPT_VERSION

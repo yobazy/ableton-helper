@@ -382,6 +382,28 @@ class Executor(object):
         written = self._write_notes(clip, notes or [])
         return {"start": start, "length": length, "notes": written}
 
+    def _op_create_session_midi_clip(self, op):
+        """Create a Session View MIDI clip in an empty slot, optionally with notes."""
+        track = self._track(op["track"])
+        slot_index = int(op.get("slot", 0))
+        slots = track.clip_slots
+        if slot_index < 0 or slot_index >= len(slots):
+            raise OpError("Track '%s' has no slot %d" % (track.name, slot_index))
+        if not _attr(track, "has_midi_input", bool, False):
+            raise OpError("Track '%s' is not a MIDI track" % track.name)
+        slot = slots[slot_index]
+        if slot.has_clip:
+            raise OpError("Slot %d on track '%s' already has a clip" % (slot_index, track.name))
+        length = float(op["length"])
+        slot.create_clip(length)
+        clip = slot.clip
+        if op.get("name"):
+            clip.name = str(op["name"])
+        if op.get("color") is not None:
+            clip.color = int(op["color"])
+        written = self._write_notes(clip, op.get("notes") or [])
+        return {"slot": slot_index, "length": length, "notes": written}
+
     def _op_delete_track(self, op):
         index = self._track_index(op["track"])
         name = self.song.tracks[index].name

@@ -13,7 +13,7 @@ from . import templates as tpl
 from .audio_service import AudioService, AudioServiceError
 from .connection import LiveConnection, LiveError
 from .matching import match_roles as _match_roles
-from .plan import PlanError, compile_plan, session_plan, skeleton_plan
+from .plan import PlanError, beats_per_bar, compile_plan, session_plan, skeleton_plan
 
 INSTRUCTIONS = """\
 Ableton Helper arranges tracks in Ableton Live's Arrangement View.
@@ -357,6 +357,52 @@ def separate_stems(track: int | None = None, slot: int | None = None, bar: float
     try:
         [source] = _sources(track, slot, bar, path, one=True)
         return _dump(hearing.stems(audio(), source, model, format))
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def audio_to_midi(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                  path: str | None = None, add_to_live: bool = False,
+                  place_at_bar: float | None = None, bpm: float | None = None,
+                  quantize: float = 0.25, onset: float | None = None, frame: float | None = None,
+                  min_note_ms: float | None = None) -> str:
+    """Turn one audio clip or file into MIDI (basic-pitch). Returns the .mid file path,
+    the tempo used and a note summary. add_to_live=True also creates a new MIDI track
+    after the source track with the notes in a Session clip (slot 0), or, with
+    place_at_bar, in an Arrangement clip starting at that bar. Pick the audio like
+    analyze_audio. Seconds become beats at the file's detected BPM (or bpm if given);
+    quantize snaps to a grid in beats (0.25 = 1/16, 0 = off). onset and frame (0 to 1)
+    make detection stricter when higher; min_note_ms drops short blips."""
+    try:
+        [source] = _sources(track, slot, bar, path, one=True)
+        snap = live().snapshot(include_devices=False) if add_to_live else None
+        set_tempo = snap["tempo"] if snap else None
+        bpb = beats_per_bar(snap) if snap else 4.0
+        result = hearing.audio_to_midi(audio(), source, bpm=bpm, set_tempo=set_tempo,
+                                       quantize=quantize, beats_per_bar=bpb, onset=onset,
+                                       frame=frame, min_note_ms=min_note_ms)
+        notes, length = result.pop("_notes"), result.pop("_length")
+        if add_to_live:
+            if not notes:
+                result["added_to_live"] = False
+                result["why_not"] = "No notes were detected, so nothing was added."
+                return _dump(result)
+            if place_at_bar is None and not hearing.script_supports_session_clips(live().ping()):
+                return _error("The AbletonHelper Remote Script in Live is older than 0.2.0 and can't "
+                              "create Session clips. Run `uv run ableton-helper install` and restart "
+                              "Live, or pass place_at_bar to put the MIDI in the Arrangement instead.")
+            ops = hearing.midi_clip_ops(source, notes, length, place_at_bar, bpb)
+            ran = live().run_ops(ops, stop_on_error=True)
+            result["added_to_live"] = not ran["errors"]
+            if ran["errors"]:
+                result["errors"] = ran["errors"]
+            else:
+                created = ran["results"][0]
+                result["new_track"] = {"index": created["index"], "name": created["name"]}
+                result["placed"] = "Session slot 1" if place_at_bar is None else f"Arrangement bar {place_at_bar:g}"
+                result["undo"] = "One undo step in Live (Cmd+Z)."
+        return _dump(result)
     except HEARING_ERRORS as e:
         return _error(e)
 

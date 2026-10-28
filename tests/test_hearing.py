@@ -243,3 +243,98 @@ def test_stems_options(svc, snapshot):
         hearing.stems(svc, source, model="spleeter")
     with pytest.raises(hearing.HearingError, match="flac or wav"):
         hearing.stems(svc, source, fmt="mp3")
+
+
+# ── audio to MIDI ────────────────────────────────────────────────────────────
+
+BASS_NOTES = [  # seconds, at 120 BPM: one note per beat, slightly off the grid
+    {"start": 0.01, "end": 0.24, "pitch": 33, "velocity": 0.9},
+    {"start": 0.51, "end": 0.74, "pitch": 33, "velocity": 0.5},
+    {"start": 0.52, "end": 0.60, "pitch": 33, "velocity": 0.4},   # a double that quantises onto the last
+    {"start": 0.99, "end": 1.49, "pitch": 36, "velocity": 1.0},
+    {"start": 4.20, "end": 4.40, "pitch": 40, "velocity": 0.7},   # beat 8.4 at 120: past a 2-bar clip
+]
+
+
+def test_notes_to_beats_quantises_and_dedupes():
+    notes = hearing.notes_to_beats(BASS_NOTES, bpm=120, quantize=0.25)
+    assert [(n["pitch"], n["start_time"], n["duration"]) for n in notes] == [
+        (33, 0.0, 0.5), (33, 1.0, 0.5), (36, 2.0, 1.0), (40, 8.5, 0.5)]
+    assert notes[0]["velocity"] == 114 and notes[2]["velocity"] == 127
+    raw = hearing.notes_to_beats(BASS_NOTES, bpm=120, quantize=0)
+    assert raw[0]["start_time"] == 0.02 and len(raw) == 5
+
+
+def test_fit_to_length_trims_and_drops():
+    notes = [{"pitch": 1, "start_time": 3.5, "duration": 2.0, "velocity": 1},
+             {"pitch": 1, "start_time": 4.0, "duration": 1.0, "velocity": 1}]
+    kept, dropped = hearing.fit_to_length(notes, 4.0)
+    assert dropped == 1 and kept[0]["duration"] == 0.5
+
+
+def test_audio_to_midi_uses_detected_tempo_and_clip_length(svc, snapshot):
+    svc.answers["Audio 7"] = KICK_ANSWER  # 124 BPM
+    svc.transcriptions["Audio 7"] = BASS_NOTES
+    [source] = hearing.find_sources(snapshot, track=1, slot=0)  # an 8-beat clip
+    out = hearing.audio_to_midi(svc, source, set_tempo=120)
+    assert out["tempo"] == 124 and out["tempo_from"] == "detected in the file"
+    assert out["clip_bars"] == 2 and out["dropped_past_clip_end"] == 1
+    assert out["lowest"] == "A0" and out["highest"] == "C1"
+    with open(out["midi_file"], "rb") as f:
+        assert f.read(4) == b"MThd"
+
+
+def test_audio_to_midi_tempo_fallbacks(svc, snapshot, files):
+    svc.transcriptions["Audio 7"] = BASS_NOTES
+    [source] = hearing.find_sources(snapshot, track=1, slot=0)
+    svc.answers["Audio 7"] = {"bpm": {"bpm": 90.0, "bpm_rounded": 90, "confidence": 0.4}}
+    assert hearing.audio_to_midi(svc, source, set_tempo=126)["tempo"] == 126
+    assert hearing.audio_to_midi(svc, source, bpm=100)["tempo_from"] == "given"
+    # A plain file with no clip: length from the notes, rounded up to whole bars.
+    out = hearing.audio_to_midi(svc, hearing.AudioSource(files["Audio 7"]), bpm=120)
+    assert out["clip_bars"] == 3  # last note ends at beat 9
+
+
+def test_midi_lands_in_a_new_session_clip_after_the_source_track(svc, snapshot, files):
+    from fake_live import FakeApp, note_spec
+    song = FakeSong()
+    make_track(song, "Drums", [(0, "drums", 4.0, None)], midi=False)
+    make_track(song, "Audio 7", [(0, "Audio 7", 8.0, None)], midi=False)
+    make_track(song, "Pad", [(0, "pad", 8.0, None)], midi=False)
+    source = hearing.AudioSource(files["Audio 7"], 1, "Audio 7", "Audio 7", slot=0, length_beats=8.0)
+    notes = hearing.notes_to_beats(BASS_NOTES[:4], 120)
+    result = lom.Executor(song, FakeApp(), note_spec).run(hearing.midi_clip_ops(source, notes, 8.0, None, 4.0))
+    assert result["errors"] == []
+    track = song.tracks[2]
+    assert track.name == "Audio 7 (MIDI)" and track.has_midi_input
+    clip = track.clip_slots[0].clip
+    assert clip.length == 8.0 and [n.pitch for n in clip.notes] == [33, 33, 36]
+    assert song.tracks[3].name == "Pad"
+
+
+def test_midi_can_go_to_the_arrangement(files):
+    from fake_live import FakeApp, note_spec
+    song = FakeSong()
+    source = hearing.AudioSource(files["Audio 7"])
+    ops = hearing.midi_clip_ops(source, [{"pitch": 60, "start_time": 0, "duration": 1, "velocity": 100}],
+                                4.0, 17, 4.0, name="Hook")
+    result = lom.Executor(song, FakeApp(), note_spec).run(ops)
+    assert result["errors"] == []
+    [clip] = song.tracks[0].arrangement_clips
+    assert clip.start_time == 64.0 and clip.name == "Hook" and len(clip.notes) == 1
+
+
+def test_session_clip_op_refuses_a_full_slot():
+    from fake_live import FakeApp, note_spec
+    song = FakeSong()
+    make_track(song, "Keys", [(0, "keys", 4.0, None)])
+    result = lom.Executor(song, FakeApp(), note_spec).run(
+        [{"op": "create_session_midi_clip", "track": 0, "slot": 0, "length": 4.0}])
+    assert "already has a clip" in result["errors"][0]["error"]
+
+
+def test_script_version_check():
+    assert hearing.script_supports_session_clips({"version": "0.2.0"})
+    assert hearing.script_supports_session_clips({"version": "0.10.1"})
+    assert not hearing.script_supports_session_clips({"version": "0.1.0"})
+    assert not hearing.script_supports_session_clips({})
