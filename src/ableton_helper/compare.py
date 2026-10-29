@@ -240,25 +240,45 @@ def compare(arr: tpl.Arrangement, snapshot: dict[str, Any], start_bar: int | Non
         want = kinds_for(template, s.roles, present)
         row = {"section": s.name, "bars": f"{s.start + shift}-{s.end + shift - 1}", "energy": s.energy,
                "playing": [], "wanted": sorted(want)}
+        # Every kind that may fill a wanted role (its own kind or a fallback) belongs here.
+        accepts = [[template.roles[k].kind] + template.roles[k].fallback for k in s.roles]
+        belongs = {kind for acc in accepts for kind in acc}
         weight = 0
+        playing: dict[int, bool] = {}
+        muted_here: dict[int, bool] = {}
+
+        def base(p: TrackPart) -> dict[str, Any]:
+            return {"track": p.index, "track_name": p.name, "part": p.kind, "bar": s.start + shift,
+                    "end_bar": s.end + shift, "sections": [s.name]}
+
         for p in in_play:
-            on = coverage(p.clips, a, b, muted=False)
-            off = coverage(p.clips, a, b, muted=True)
-            playing = on >= PLAYING
-            if playing:
+            playing[p.index] = coverage(p.clips, a, b, muted=False) >= PLAYING
+            muted_here[p.index] = coverage(p.clips, a, b, muted=True) >= PLAYING
+            if playing[p.index]:
                 row["playing"].append(p.name)
                 weight += WEIGHTS.get(p.kind, 1)
-            base = {"track": p.index, "track_name": p.name, "part": p.kind, "bar": s.start + shift,
-                    "end_bar": s.end + shift, "sections": [s.name]}
-            if p.kind in want and not playing:
-                if off >= PLAYING:
-                    changes.append({**base, "action": "unmute"})
-                else:
-                    changes.append({**base, "action": "add",
-                                    "from": f"Session slot {p.session_slots[0]}" if p.session_slots
-                                    else "its clips elsewhere in the arrangement"})
-            elif p.kind not in want and playing:
-                changes.append({**base, "action": "mute"})
+                if p.kind not in belongs:
+                    changes.append({**base(p), "action": "mute"})
+        # Each wanted role needs one track of its kinds playing; another track of the same
+        # part taking its turn counts.
+        suggested: set[int] = set()
+        for acc in accepts:
+            if any(playing[p.index] for p in in_play if p.kind in acc):
+                continue
+            kind = next((k for k in acc if k in present), None)
+            if kind is None:
+                continue  # no track for it at all: reported under missing_parts
+            candidates = [p for p in in_play if p.kind == kind and p.index not in suggested]
+            switched_off = [p for p in candidates if muted_here[p.index]]
+            for p in switched_off:
+                changes.append({**base(p), "action": "unmute"})
+                suggested.add(p.index)
+            if not switched_off and candidates:
+                p = candidates[0]
+                changes.append({**base(p), "action": "add",
+                                "from": f"Session slot {p.session_slots[0]}" if p.session_slots
+                                else "its clips elsewhere in the arrangement"})
+                suggested.add(p.index)
         set_energy.append(weight)
         grid.append(row)
 

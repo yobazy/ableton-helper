@@ -38,6 +38,8 @@ from .hearing import SECTIONS_MISSING, AudioSource, HearingError
 VARIANT = "reference"
 PHRASE_BARS = 8
 SILENCE_LABELS = {"start", "end"}  # allin1's silence before and after the music
+# When a section has no energy: what its label usually is in a dance track.
+LABEL_KINDS = {"chorus": "Drop", "break": "Breakdown", "bridge": "Breakdown"}
 
 # The parts a reference is heard as. Kinds and fallbacks are matching.py's, so the
 # producer's loops find their way in through match_roles.
@@ -115,7 +117,7 @@ def best_offset(boundaries: list[float], phrase: int) -> int:
         return 0
 
     def dist(b: float, o: int) -> float:
-        return abs(b - o - round((b - o) / phrase) * phrase)
+        return abs(b - _nearest(b, o, phrase))
 
     def on_grid(o: int) -> int:
         return sum(1 for b in inner if dist(b, o) <= 0.5)
@@ -132,14 +134,24 @@ def best_offset(boundaries: list[float], phrase: int) -> int:
     return best
 
 
+def _nearest(b: float, offset: int, phrase: int) -> int:
+    """The nearest grid line, halves rounding up (Python's round() sends halves to even,
+    which split boundaries that sit exactly half a phrase off in both directions)."""
+    return offset + math.floor((b - offset) / phrase + 0.5) * phrase
+
+
 def snap(boundaries: list[float], phrase: int) -> tuple[list[int], int]:
-    """Boundaries (bars) snapped to the phrase grid, never going backwards, and the offset."""
+    """Boundaries (bars) snapped to the phrase grid, never going backwards, and the offset.
+    Two boundaries landing on one line merge their sections, unless they're at least half a
+    phrase apart: then the later one moves to the next line, so a real section survives."""
     phrase = max(1, int(phrase))
     offset = best_offset(boundaries, phrase)
     out: list[int] = []
-    for b in boundaries:
-        s = offset + round((b - offset) / phrase) * phrase
-        out.append(max(s, out[-1]) if out else s)
+    for i, b in enumerate(boundaries):
+        s = _nearest(b, offset, phrase)
+        if out and s <= out[-1]:
+            s = out[-1] + phrase if b - boundaries[i - 1] >= phrase / 2 else out[-1]
+        out.append(s)
     if len(out) >= 2 and out[-1] <= out[0]:  # a reference shorter than one phrase
         out[-1] = out[0] + phrase
     return out, offset
@@ -267,7 +279,8 @@ def build_sections(segments: list[dict[str, Any]], grid: BarGrid, phrase: int) -
         if not loud:  # older answers: only the relative energy (an amplitude ratio)
             loud = [(20 * math.log10(max(float(seg["energy"]), 1e-6)), o)
                     for seg, o in overlaps if seg.get("energy") is not None]
-        raw_start = next((r for r, s in zip(raw, snapped) if s == a), a)
+        # The last raw boundary that landed here is the one this section really starts at.
+        raw_start = next((r for r, s in reversed(list(zip(raw, snapped))) if s == a), a)
         out.append(RefSection(a, b, label, grid.time(a), grid.time(b), _power_mean_db(loud), raw_start=raw_start))
     loudest = max((s.loudness_db for s in out if s.loudness_db is not None), default=None)
     for s in out:
@@ -294,6 +307,8 @@ def hear_parts(sections: list[RefSection], stem_files: dict[str, str]) -> None:
             row.append(_db(sum(chunk) / len(chunk)) if chunk else -120.0)
         levels[name] = row
     mix_peak = max((max(r) for r in levels.values()), default=-120.0)
+    if mix_peak <= -119.0:  # every level would equal its own peak and look "in"
+        raise ValueError("the stems are silent")
 
     def active(name: str, i: int) -> tuple[bool, float]:
         row = levels[name]
@@ -356,9 +371,21 @@ def name_sections(sections: list[RefSection], heard: bool) -> None:
         if i < lead or i >= tail:
             s.kind = "Intro" if i < lead else "Outro"
             continue
-        level = s.energy if s.energy is not None else 5
-        before = sections[i - 1].energy if i and sections[i - 1].energy is not None else level
         kick = ("kick" in s.parts) if heard else None
+        if s.energy is None:  # no loudness this time: go by allin1's label
+            kind = LABEL_KINDS.get(s.label, "Groove")
+            if kick is False:
+                kind = "Breakdown"
+            elif kick and kind == "Breakdown":
+                kind = "Groove"
+            if kind != "Drop" and i == 0 and n > 1:
+                kind = "Intro"
+            elif kind != "Drop" and i == n - 1 and n > 2:
+                kind = "Outro"
+            s.kind = kind
+            continue
+        level = s.energy
+        before = sections[i - 1].energy if i and sections[i - 1].energy is not None else level
         # A drop is (nearly) the loudest part, or a jump of 3+ after a dip, with the kick in.
         is_drop = kick is not False and s.label not in ("intro", "outro") and \
             (level >= 9 or (level >= 7 and level - before >= 3))
@@ -450,16 +477,25 @@ def save_template(key: str, data: dict[str, Any]) -> Path:
     return path
 
 
-def _tempo(service: AudioService, source: AudioSource, sections_bpm: float | None) -> tuple[float, str]:
-    """The bpm feature is the better tempo (the audio-analysis README says so); allin1's is the fallback."""
+def _tempo(service: AudioService, source: AudioSource, sections_bpm: float | None,
+           downbeat_bpm: float | None = None) -> tuple[float, str]:
+    """The bpm feature is the better tempo (the audio-analysis README says so); allin1's is the
+    fallback. The bars come from allin1's downbeats, so a bpm reading at half or double that
+    tempo is corrected to match them."""
     try:
         bpm = service.analyze(source.path, ["bpm"])["results"].get("bpm") or {}
     except AudioServiceUnavailable:
         raise
     except AudioServiceError:
         bpm = {}
+    ref = downbeat_bpm or sections_bpm
     if "error" not in bpm and bpm.get("bpm") and bpm.get("confidence", 1) >= 0.5:
-        return tidy_bpm(float(bpm["bpm"])), "the bpm analysis"
+        value, why = float(bpm["bpm"]), "the bpm analysis"
+        if ref and 1.8 < value / ref < 2.2:
+            value, why = value / 2, "the bpm analysis, halved to match the downbeats"
+        elif ref and 0.45 < value / ref < 0.55:
+            value, why = value * 2, "the bpm analysis, doubled to match the downbeats"
+        return tidy_bpm(value), why
     if sections_bpm:
         return tidy_bpm(float(sections_bpm)), "allin1's beats"
     raise HearingError("Couldn't tell the reference's tempo.")
@@ -488,7 +524,7 @@ def analyze_reference(service: AudioService, source: AudioSource, name: str | No
     if data.get("partial"):
         warnings.append("The service couldn't measure loudness this time, so sections have no energy; "
                         "ask again later for energy.")
-    bpm, bpm_from = _tempo(service, source, data.get("bpm"))
+    bpm, bpm_from = _tempo(service, source, data.get("bpm"), 240.0 / grid.bar_seconds)
 
     heard = False
     if use_stems:

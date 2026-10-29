@@ -103,8 +103,8 @@ client call (`AudioService.sections`) already existed from Phase 3.1.
 - [x] `mark_sections`
 - [x] `compare_arrangement` (+ `apply`)
 - [x] Remote Script 0.3.0 ops, tested against the fake
-- [x] Tests: `test_reference.py` (21), `test_compare.py` (11) on a fake service and set;
-      all 109 pass with the stand-in (77 before this branch), 4 skipped (opt-in)
+- [x] Tests: `test_reference.py` (27), `test_compare.py` (13) on a fake service and set;
+      all 117 pass with the stand-in (77 before this branch), 4 skipped (opt-in)
 - [x] Opt-in `test_reference_live.py`: the stems test **passed against the real service**
       on a generated 48-bar track. Real Demucs heard every section's kick, hats, bass and
       music right; the "vocal" (a plain 440 Hz sine) went to Demucs's other stem, as it
@@ -114,8 +114,39 @@ client call (`AudioService.sections`) already existed from Phase 3.1.
 - [x] Self-review of `git diff origin/phase-3-1-hear...HEAD`: fixed templates cached until a
       restart, a 124.02 BPM tempo, silent overwrite of a same-named template, `../` in a
       template name
-- [ ] Independent review pass (running at the time of writing; see below)
-- [ ] Draft PR
+- [x] Independent review pass (below)
+- [x] Draft PR
+
+## Review pass
+
+A fresh read of the whole branch diff, each finding reproduced with a script, then a
+failing test, then fixed:
+
+1. **Sections vanished on half-way boundaries.** Python's `round()` sends halves to even,
+   so 4-bar sections at bars 4, 12, 20... snapped alternately down and up and collapsed
+   (two choruses lost). Halves now round up, and two boundaries landing on one grid line
+   that are at least half a phrase apart push the later one to the next line.
+2. **Half or double tempo was taken as is.** The bars come from allin1's downbeats but the
+   tempo from the bpm feature; a 62 BPM reading for a 124 BPM track is now doubled to match
+   the downbeats (and the answer says so).
+3. **Fallback parts were muted.** A Perc track standing in for hats, or a lead for "chords
+   and synths", got "mute" everywhere. Sections are now judged per wanted role: any kind the
+   role takes (its own or a fallback) belongs there.
+4. **"Add" for a part another track already plays.** Two bass tracks taking turns each got
+   "add" in the other's sections. A role is satisfied when any of its tracks plays.
+5. **No energy and no stems made every middle section a Breakdown.** Without energy,
+   sections are now named from allin1's label (chorus = Drop, break or bridge = Breakdown,
+   else Groove).
+6. **`moved_from_bar` could name a swallowed boundary** (display only). It now uses the last
+   raw boundary that landed on the section's start.
+7. Edge: all-silent stems marked every part as playing everywhere; they now count as failed
+   stems (the usual parts, with a warning).
+
+Checked and fine per the review: bars vs beats, mute ranges, locator deletion, op order
+around compile_plan's reset and show, pairing ops with results in `apply`, built-in genres
+still loading.
+
+Still assumed: 4/4 (the downbeat tempo is 4 beats per bar).
 
 ## Try it
 

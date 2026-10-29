@@ -189,3 +189,31 @@ def test_lanes_and_unknown_kinds_are_left_out(live, small):
     out = json.loads(server.compare_arrangement(small))
     assert not any(c["track_name"] in ("Risers & Sweeps", "Crash FX") for c in out["changes"])
     assert out["not_in_template"] == ["6 'Crash FX' (fx)"]
+
+
+# ── review pass ──────────────────────────────────────────────────────────────
+
+def _set(monkeypatch, tracks):
+    s = FakeSong()
+    for name, spans in tracks:
+        t = make_track(s, name, [(0, name.lower(), 4.0, [(36, 0, 1, 100)])])
+        t.arrangement_clips = [_clip(name.lower(), a, b) for a, b in spans]
+    monkeypatch.setattr(server, "_live", FakeLive(s, version="0.3.0"))
+    return s
+
+
+def test_a_fallback_part_is_not_muted(monkeypatch, small):
+    # Perc stands in for hats and a lead for "chords and synths": both belong there.
+    _set(monkeypatch, [("Kick", [(1, 48)]), ("Perc", [(1, 16), (25, 16)]), ("Bass", [(9, 8), (25, 16)]),
+                       ("Lead Synth", [(9, 32)])])
+    out = json.loads(server.compare_arrangement(small))
+    says = [c["say"] for c in out["changes"]]
+    assert not any(x.startswith(("Mute 'Perc", "Mute 'Lead")) for x in says), says
+    assert "Add 'Perc' to Outro (bars 41-48), from Session slot 0." in says  # it stops at bar 40
+
+
+def test_no_add_when_another_track_of_that_part_plays(monkeypatch, small):
+    _set(monkeypatch, [("Kick", [(1, 16), (25, 24)]), ("Hats", [(1, 16), (25, 24)]),
+                       ("Bass", [(9, 8)]), ("Bass 2", [(25, 16)]), ("Chords", [(9, 32)])])
+    out = json.loads(server.compare_arrangement(small))
+    assert not any(c["action"] == "add" and c["part"] == "bass" for c in out["changes"]), out["changes"]

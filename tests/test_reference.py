@@ -253,3 +253,56 @@ def test_template_names_cant_leave_the_folder(user_templates, tmp_path):
 
 def test_tidy_bpm():
     assert reference.tidy_bpm(124.02) == 124.0 and reference.tidy_bpm(123.5) == 123.5
+
+
+# ── review pass ──────────────────────────────────────────────────────────────
+
+def test_half_way_boundaries_round_the_same_way():
+    # Python rounds halves to even; 4-bar sections used to collapse into each other.
+    assert snap([0, 4, 12, 20, 28, 36], 8)[0] == [0, 8, 16, 24, 32, 40]
+
+
+def test_two_far_apart_boundaries_on_one_line_are_pushed_apart():
+    # 4.1 and 11.9 both round to 8, but they're nearly a phrase apart: two sections.
+    assert snap([0, 4.1, 11.9, 32], 8)[0] == [0, 8, 16, 32]
+
+
+def test_a_half_tempo_reading_is_doubled(tmp_path, track_file):
+    fake = FakeAudioService(tmp_path / "cache", features=FEATURES)
+    fake.answers["Club Track"] = {"bpm": {"bpm": 62.0, "bpm_rounded": 62, "confidence": 0.8}}
+    bpm, why = reference._tempo(fake, AudioSource(str(track_file)), 124.0, 124.0)
+    assert bpm == 124.0 and "doubled" in why
+
+
+def test_names_without_energy_or_stems_come_from_labels():
+    secs = _sections([("intro", 8, None, []), ("verse", 16, None, []), ("break", 8, None, []),
+                      ("chorus", 16, None, []), ("outro", 8, None, [])])
+    name_sections(secs, heard=False)
+    assert [s.name for s in secs] == ["Intro", "Groove", "Breakdown", "Drop", "Outro"]
+
+
+def test_moved_from_is_the_boundary_that_starts_the_section():
+    grid = BarGrid([i * 2.0 for i in range(40)])
+    segs = [{"start": 0, "end": 15.2, "label": "intro", "loudness_lufs": -14},    # ends at bar 7.6
+            {"start": 15.2, "end": 16.8, "label": "break", "loudness_lufs": -14},  # bars 7.6 to 8.4
+            {"start": 16.8, "end": 64, "label": "chorus", "loudness_lufs": -8}]
+    sections, _, _ = build_sections(segs, grid, 8)
+    assert sections[1].start == 8 and sections[1].raw_start == pytest.approx(8.4)
+
+
+def test_silent_stems_count_as_failed(tmp_path):
+    import wave
+    paths = {}
+    for name in ("drums", "bass", "other", "vocals"):
+        p = tmp_path / f"{name}.wav"
+        with wave.open(str(p), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(6000)
+            w.writeframes(b"\0\0" * 6000 * 40)
+        paths[name] = str(p)
+    secs = _sections([("intro", 8, 5, []), ("chorus", 8, 10, [])])
+    for s in secs:
+        s.start_s, s.end_s = s.start * 2.0, s.end * 2.0
+    with pytest.raises(ValueError, match="silent"):
+        reference.hear_parts(secs, paths)
