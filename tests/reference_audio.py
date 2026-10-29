@@ -27,12 +27,12 @@ LAYOUT = [
 ]
 
 
-def _write(path: Path, samples: list[float]) -> bytes:
-    data = b"".join(struct.pack("<h", max(-32767, min(32767, int(s * 32767)))) for s in samples)
+def _write(path: Path, samples: list[float], rate: int = RATE) -> bytes:
+    data = b"".join(struct.pack("<h", max(-32767, min(32767, int(x * 32767)))) for x in samples)
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(RATE)
+        w.setframerate(rate)
         w.writeframes(data)
     return path.read_bytes()
 
@@ -50,70 +50,57 @@ def total_seconds(layout=LAYOUT) -> float:
     return sum(b for _, b, _ in layout) * BAR_SECONDS
 
 
-_made: dict[int, dict[str, bytes]] = {}
+_made: dict[tuple[int, int], dict[str, list[float]]] = {}
 
 
-def stems(folder: Path, layout=LAYOUT) -> dict[str, bytes]:
+def stems(folder: Path, layout=LAYOUT, rate: int = RATE) -> dict[str, bytes]:
     """WAV bytes for drums, bass, other and vocals, also written to ``folder``."""
-    if id(layout) not in _made:
-        _made[id(layout)] = _render(folder, layout)
-    for name, data in _made[id(layout)].items():
-        (folder / f"{name}.wav").write_bytes(data)
-    return _made[id(layout)]
+    key = (id(layout), rate)
+    if key not in _made:
+        _made[key] = _render(layout, rate)
+    return {name: _write(folder / f"{name}.wav", samples, rate) for name, samples in _made[key].items()}
 
 
-def _render(folder: Path, layout) -> dict[str, bytes]:
-    n = int(total_seconds(layout) * RATE)
+def _render(layout, rate: int) -> dict[str, list[float]]:
+    n = int(total_seconds(layout) * rate)
     beat = 60.0 / BPM
     rnd = random.Random(7)
     drums = [0.0] * n
     for a, b in _spans("kick", layout):
         t = a
         while t < b - 1e-9:
-            start = int(t * RATE)
-            for i in range(int(0.2 * RATE)):
+            start = int(t * rate)
+            for i in range(int(0.2 * rate)):
                 if start + i < n:
-                    drums[start + i] += 0.8 * math.sin(2 * math.pi * 55 * i / RATE) * math.exp(-i / RATE * 12)
+                    drums[start + i] += 0.8 * math.sin(2 * math.pi * 55 * i / rate) * math.exp(-i / rate * 12)
             t += beat
     for a, b in _spans("hats", layout):
         t = a + beat / 2
         while t < b - 1e-9:
-            start = int(t * RATE)
+            start = int(t * rate)
             prev = 0.0
-            for i in range(int(0.04 * RATE)):
+            for i in range(int(0.04 * rate)):
                 if start + i < n:
                     x = rnd.uniform(-1, 1)
-                    drums[start + i] += 0.5 * (x - prev) * math.exp(-i / RATE * 80)  # bright noise
+                    drums[start + i] += 0.5 * (x - prev) * math.exp(-i / rate * 80)  # bright noise
                     prev = x
             t += beat
 
     def tone(part: str, freqs: list[float], amp: float) -> list[float]:
         out = [0.0] * n
         for a, b in _spans(part, layout):
-            for i in range(int(a * RATE), min(n, int(b * RATE))):
-                out[i] = amp * sum(math.sin(2 * math.pi * f * i / RATE) for f in freqs) / len(freqs)
+            for i in range(int(a * rate), min(n, int(b * rate))):
+                out[i] = amp * sum(math.sin(2 * math.pi * f * i / rate) for f in freqs) / len(freqs)
         return out
 
-    return {
-        "drums": _write(folder / "drums.wav", drums),
-        "bass": _write(folder / "bass.wav", tone("bass", [55.0], 0.6)),
-        "other": _write(folder / "other.wav", tone("music", [220.0, 277.2, 329.6], 0.4)),
-        "vocals": _write(folder / "vocals.wav", tone("vocal", [440.0], 0.3)),
-    }
+    return {"drums": drums, "bass": tone("bass", [55.0], 0.6),
+            "other": tone("music", [220.0, 277.2, 329.6], 0.4), "vocals": tone("vocal", [440.0], 0.3)}
 
 
-def mixdown(path: Path, layout=LAYOUT) -> Path:
-    """All the parts in one file, for the real service (opt-in test)."""
-    folder = path.parent / (path.stem + "-stems")
-    folder.mkdir(exist_ok=True)
-    stems(folder, layout)
-    tracks = []
-    for name in ("drums", "bass", "other", "vocals"):
-        with wave.open(str(folder / f"{name}.wav"), "rb") as w:
-            raw = w.readframes(w.getnframes())
-        tracks.append(struct.unpack(f"<{len(raw) // 2}h", raw))
-    mixed = [sum(vals) / 32768.0 / 2 for vals in zip(*tracks)]
-    _write(path, mixed)
+def mixdown(path: Path, layout=LAYOUT, rate: int = 22050) -> Path:
+    """All the parts in one file, for the real service (opt-in tests)."""
+    parts = _render(layout, rate)
+    _write(path, [sum(vals) / 2 for vals in zip(*parts.values())], rate)
     return path
 
 
