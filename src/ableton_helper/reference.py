@@ -447,7 +447,6 @@ def save_template(key: str, data: dict[str, Any]) -> Path:
     path = folder / f"{key}.yaml"
     path.write_text("# Made by analyze_reference. Edit freely: it's an ordinary template.\n"
                     + yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110))
-    tpl.load_template.cache_clear()
     return path
 
 
@@ -460,10 +459,15 @@ def _tempo(service: AudioService, source: AudioSource, sections_bpm: float | Non
     except AudioServiceError:
         bpm = {}
     if "error" not in bpm and bpm.get("bpm") and bpm.get("confidence", 1) >= 0.5:
-        return float(bpm["bpm"]), "the bpm analysis"
+        return tidy_bpm(float(bpm["bpm"])), "the bpm analysis"
     if sections_bpm:
-        return float(sections_bpm), "allin1's beats"
+        return tidy_bpm(float(sections_bpm)), "allin1's beats"
     raise HearingError("Couldn't tell the reference's tempo.")
+
+
+def tidy_bpm(bpm: float) -> float:
+    """124.02 is a 124 BPM track; 123.5 stays 123.5."""
+    return float(round(bpm)) if abs(bpm - round(bpm)) < 0.15 else round(bpm, 2)
 
 
 def analyze_reference(service: AudioService, source: AudioSource, name: str | None = None,
@@ -519,6 +523,7 @@ def analyze_reference(service: AudioService, source: AudioSource, name: str | No
     }
     out_data = template_data(key, title, bpm, sections, meta)
     template = tpl.parse_template(out_data, key)
+    replaced = save and (tpl.user_template_dir() / f"{key}.yaml").exists()
     saved = save_template(key, out_data) if save else None
 
     first = sections[0].start
@@ -540,6 +545,8 @@ def analyze_reference(service: AudioService, source: AudioSource, name: str | No
     }
     if saved:
         out["saved_to"] = str(saved)
+        if replaced:
+            out["replaced"] = f"There was already a template called {key}; this one replaces it."
     if warnings:
         out["warnings"] = warnings
     out["next"] = (f"preview_template('{key}', 'reference') shows it; mark_sections('{key}') puts its "

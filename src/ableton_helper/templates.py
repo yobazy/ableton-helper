@@ -7,6 +7,7 @@ a 16-bar section starting at bar 1 covers bars [1, 17).
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -136,17 +137,31 @@ def template_key(genre: str) -> str:
     return aliases.get(key, key)
 
 
-@lru_cache(maxsize=None)
 def load_template(genre: str) -> Template:
+    """A built-in genre, else a template in the user folder. Cached per file version, so an
+    edited or regenerated file is picked up without restarting the server."""
     key = template_key(genre)
     path = TEMPLATE_DIR / f"{key}.yaml"
     if not path.exists():
         path = user_template_dir() / f"{key}.yaml"
-    if not path.exists():
+    if not KEY_PATTERN.fullmatch(key) or not path.exists():
         mine = user_genres()
         raise TemplateError(f"No template for '{genre}'. Available: {', '.join(available_genres())}"
                             + (f"; from references: {', '.join(mine)}" if mine else ""))
-    return parse_template(yaml.safe_load(path.read_text()), key)
+    stat = path.stat()
+    return _load_file(str(path), (stat.st_mtime_ns, stat.st_size), key)
+
+
+KEY_PATTERN = re.compile(r"[a-z0-9_]+")
+
+
+@lru_cache(maxsize=64)
+def _load_file(path: str, _version: tuple[int, int], key: str) -> Template:
+    try:
+        data = yaml.safe_load(Path(path).read_text())
+    except yaml.YAMLError as e:
+        raise TemplateError(f"Template '{key}' isn't valid YAML: {e}") from e
+    return parse_template(data, key)
 
 
 def parse_template(data: dict[str, Any], key: str) -> Template:

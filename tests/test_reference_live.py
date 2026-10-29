@@ -49,12 +49,8 @@ def test_a_generated_track_becomes_a_template(svc, track, tmp_path, monkeypatch)
     if not svc.has_feature("sections"):
         pytest.skip("this service has no /v1/sections yet")
     monkeypatch.setenv("ABLETON_HELPER_TEMPLATES", str(tmp_path / "templates"))
-    tpl.load_template.cache_clear()
-    try:
-        out = reference.analyze_reference(svc, AudioSource(str(track)))
-        assert 40 <= out["bars"] <= 56, out
-        assert len(out["sections"]) >= 2, out
-        assert 115 <= out["bpm"] <= 125, out
-        assert tpl.compile_arrangement(tpl.load_template(out["template"]), "reference").total_bars == out["bars"]
-    finally:
-        tpl.load_template.cache_clear()
+    out = reference.analyze_reference(svc, AudioSource(str(track)))
+    assert 40 <= out["bars"] <= 56, out
+    assert len(out["sections"]) >= 2, out
+    assert 115 <= out["bpm"] <= 125, out
+    assert tpl.compile_arrangement(tpl.load_template(out["template"]), "reference").total_bars == out["bars"]

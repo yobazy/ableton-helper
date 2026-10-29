@@ -18,9 +18,7 @@ FEATURES = ("bpm", "key", "tags", "embedding", "loudness", "sections")
 @pytest.fixture
 def user_templates(tmp_path, monkeypatch):
     monkeypatch.setenv("ABLETON_HELPER_TEMPLATES", str(tmp_path / "templates"))
-    tpl.load_template.cache_clear()
     yield tmp_path / "templates"
-    tpl.load_template.cache_clear()
 
 
 @pytest.fixture
@@ -233,3 +231,25 @@ def test_hear_parts_reads_real_wavs(tmp_path):
     reference.hear_parts(sections, {n: str(folder / f"{n}.wav") for n in ("drums", "bass", "other", "vocals")})
     expected = [sorted(p) for _l, _b, p in ref.LAYOUT]
     assert [sorted(s.parts) for s in sections] == expected
+
+
+def test_an_edited_template_is_picked_up_without_a_restart(svc, track_file, user_templates):
+    server.analyze_reference(path=str(track_file))
+    path = user_templates / "ref_club_track.yaml"
+    assert tpl.load_template("ref_club_track").name == "Reference: Club Track"
+    path.write_text(path.read_text().replace("name: 'Reference: Club Track'", "name: Edited by hand"))
+    assert tpl.load_template("ref_club_track").name == "Edited by hand"
+    again = json.loads(server.analyze_reference(path=str(track_file)))
+    assert "replaces it" in again["replaced"]
+    path.write_text("roles: [")
+    assert "isn't valid YAML" in server.preview_template("ref_club_track")
+
+
+def test_template_names_cant_leave_the_folder(user_templates, tmp_path):
+    (tmp_path / "evil.yaml").write_text("x: 1")
+    with pytest.raises(tpl.TemplateError, match="No template"):
+        tpl.load_template("../evil")
+
+
+def test_tidy_bpm():
+    assert reference.tidy_bpm(124.02) == 124.0 and reference.tidy_bpm(123.5) == 123.5

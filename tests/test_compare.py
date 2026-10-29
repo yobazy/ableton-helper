@@ -27,10 +27,8 @@ TEMPLATE = {
 @pytest.fixture
 def small(tmp_path, monkeypatch):
     monkeypatch.setenv("ABLETON_HELPER_TEMPLATES", str(tmp_path / "templates"))
-    tpl.load_template.cache_clear()
     reference.save_template("ref_small", TEMPLATE)
     yield "ref_small"
-    tpl.load_template.cache_clear()
 
 
 def _clip(name, bar, bars, muted=False):
