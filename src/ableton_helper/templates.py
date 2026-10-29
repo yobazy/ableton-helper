@@ -6,6 +6,8 @@ a 16-bar section starting at bar 1 covers bars [1, 17).
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -85,6 +87,7 @@ class Template:
     bpm_range: list[float]
     roles: dict[str, Role]
     variants: dict[str, dict[str, Any]]
+    reference: dict[str, Any] | None = None  # set on templates made from a reference track
 
 
 @dataclass
@@ -112,20 +115,59 @@ class Arrangement:
 
 # ── loading ──────────────────────────────────────────────────────────────────
 
+def user_template_dir() -> Path:
+    """Where generated templates (from reference tracks) are saved."""
+    return Path(os.environ.get("ABLETON_HELPER_TEMPLATES",
+                               Path.home() / ".config" / "ableton-helper" / "templates")).expanduser()
+
+
 def available_genres() -> list[str]:
     return sorted(p.stem for p in TEMPLATE_DIR.glob("*.yaml"))
 
 
-@lru_cache(maxsize=None)
-def load_template(genre: str) -> Template:
+def user_genres() -> list[str]:
+    d = user_template_dir()
+    return sorted(p.stem for p in d.glob("*.yaml")) if d.is_dir() else []
+
+
+def template_key(genre: str) -> str:
     key = genre.strip().lower().replace(" ", "_").replace("-", "_").replace("&", "and")
     aliases = {"dnb": "drum_and_bass", "d_and_b": "drum_and_bass", "ukg": "uk_garage",
                "garage": "uk_garage", "techhouse": "tech_house", "deephouse": "deep_house"}
-    key = aliases.get(key, key)
+    return aliases.get(key, key)
+
+
+def load_template(genre: str) -> Template:
+    """A built-in genre, else a template in the user folder. Cached per file version, so an
+    edited or regenerated file is picked up without restarting the server."""
+    key = template_key(genre)
     path = TEMPLATE_DIR / f"{key}.yaml"
     if not path.exists():
-        raise TemplateError(f"No template for '{genre}'. Available: {', '.join(available_genres())}")
-    data = yaml.safe_load(path.read_text())
+        path = user_template_dir() / f"{key}.yaml"
+    if not KEY_PATTERN.fullmatch(key) or not path.exists():
+        mine = user_genres()
+        raise TemplateError(f"No template for '{genre}'. Available: {', '.join(available_genres())}"
+                            + (f"; from references: {', '.join(mine)}" if mine else ""))
+    stat = path.stat()
+    return _load_file(str(path), (stat.st_mtime_ns, stat.st_size), key)
+
+
+KEY_PATTERN = re.compile(r"[a-z0-9_]+")
+
+
+@lru_cache(maxsize=64)
+def _load_file(path: str, _version: tuple[int, int], key: str) -> Template:
+    try:
+        data = yaml.safe_load(Path(path).read_text())
+    except yaml.YAMLError as e:
+        raise TemplateError(f"Template '{key}' isn't valid YAML: {e}") from e
+    return parse_template(data, key)
+
+
+def parse_template(data: dict[str, Any], key: str) -> Template:
+    """A template from its YAML data; compiles every variant so a broken one fails here."""
+    if not isinstance(data, dict) or not data.get("roles") or not data.get("variants"):
+        raise TemplateError(f"Template '{key}' needs roles and variants")
     roles = {}
     for rkey, spec in data["roles"].items():
         spec = spec or {}
@@ -147,6 +189,7 @@ def load_template(genre: str) -> Template:
         bpm_range=list(data.get("bpm_range", [data.get("bpm", 120)] * 2)),
         roles=roles,
         variants=data["variants"],
+        reference=data.get("reference"),
     )
     for vname in template.variants:
         compile_arrangement(template, vname)  # fail fast on a broken template

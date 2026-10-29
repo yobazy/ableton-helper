@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
 
-from . import hearing
+from . import compare, hearing, reference
 from . import templates as tpl
 from .audio_service import AudioService, AudioServiceError
 from .connection import LiveConnection, LiveError
@@ -38,6 +38,15 @@ Rules:
   (BPM, key, loudness, energy), audio_spectrogram (look at it), separate_stems,
   audio_to_midi and tag_loop_roles (what a badly named loop is). MIDI clips have no
   audio file; use their notes. If the PC is off, say so and carry on with names and notes.
+
+Arranging from a reference track:
+1. analyze_reference(path=...) turns a track into a template (sections in bars, energy,
+   which parts play where) saved as genre "ref_<name>", variant "reference". Show the
+   producer its sections.
+2. mark_sections puts its locators (and optionally scenes or a Sections track) in the set.
+   It's a dry run by default: show the plan, then call again with dry_run=False.
+3. To build: arrange_session(genre="ref_<name>", variant="reference"). To check an
+   existing arrangement: compare_arrangement, then talk the producer through the changes.
 """
 
 mcp = FastMCP("ableton-helper", instructions=INSTRUCTIONS)
@@ -167,15 +176,22 @@ def get_session(include_notes: bool = False) -> str:
 def list_templates() -> str:
     """List the genre templates and their variants (e.g. extended club mix, radio edit)."""
     out = []
-    for genre in tpl.available_genres():
-        t = tpl.load_template(genre)
+    for genre in tpl.available_genres() + tpl.user_genres():
+        try:
+            t = tpl.load_template(genre)
+        except (tpl.TemplateError, KeyError, TypeError, ValueError) as e:  # a hand-edited file
+            out.append({"genre": genre, "error": str(e)})
+            continue
         variants = {}
         for name in t.variants:
             arr = tpl.compile_arrangement(t, name)
             variants[name] = f"{arr.total_bars} bars, {tpl.bar_to_time(arr.total_bars + 1, arr.bpm)} " \
                              f"at {arr.bpm:g} BPM — {t.variants[name].get('description', '')}"
-        out.append({"genre": genre, "name": t.name, "bpm_range": t.bpm_range,
-                    "description": t.description, "variants": variants})
+        entry = {"genre": genre, "name": t.name, "bpm_range": t.bpm_range,
+                 "description": t.description, "variants": variants}
+        if t.reference:
+            entry["from_reference"] = t.reference.get("file")
+        out.append(entry)
     return _dump(out)
 
 
@@ -457,6 +473,116 @@ def detect_sections(track: int | None = None, slot: int | None = None, bar: floa
         [source] = _sources(track, slot, bar, path, one=True, snap=snap)
         return _dump(hearing.sections(audio(), source, beats_per_bar(snap) if snap else 4.0))
     except HEARING_ERRORS as e:
+        return _error(e)
+
+
+# ── arranging from a reference (Phase 4) ─────────────────────────────────────
+
+@mcp.tool()
+def analyze_reference(path: str | None = None, track: int | None = None, slot: int | None = None,
+                      bar: float | None = None, name: str | None = None, phrase_bars: int = 8,
+                      use_stems: bool = True, save: bool = True) -> str:
+    """Turn a reference track into an arrangement template: its sections in bars (snapped to
+    phrase_bars, 8 by default), an energy of 1 to 10 per section, and which parts play in
+    each (kick, hats and tops, bass, chords and synths, vocal), heard from stems. Saved as
+    genre "ref_<name>" with variant "reference", so preview_template, build_skeleton,
+    arrange_session, mark_sections and compare_arrangement all take it. Pass path (a song
+    file), or pick a clip like analyze_audio. Needs the home PC; about 15 s for a 5-minute
+    track on its GPU, cached after."""
+    try:
+        snap = None if path else live().snapshot(include_devices=False)
+        [source] = _sources(track, slot, bar, path, one=True, snap=snap)
+        return _dump(reference.analyze_reference(audio(), source, name=name, phrase_bars=phrase_bars,
+                                                 use_stems=use_stems, save=save))
+    except HEARING_ERRORS + (tpl.TemplateError,) as e:
+        return _error(e)
+
+
+@mcp.tool()
+def mark_sections(genre: str, variant: str | None = None, start_bar: int = 1,
+                  locators: bool = True, scenes: bool = False, section_track: bool = False,
+                  replace_locators: bool = False, set_tempo: bool = False,
+                  dry_run: bool = True) -> str:
+    """Lay a template's sections out in the current set without touching any clips: a
+    locator at each section start (locators), an empty Session scene per section named
+    like "Drop 1 (32 bars)" (scenes), and/or a "Sections" MIDI track with one named block
+    per section coloured by energy (section_track). Works with a genre or a template made
+    by analyze_reference. start_bar moves the whole layout. replace_locators deletes the
+    set's other locators. Dry run by default: show the producer the plan it returns, then
+    call again with dry_run=False to do it in one undo step."""
+    try:
+        template = tpl.load_template(genre)
+        variant = compare.default_variant(template, variant)
+        arr = tpl.compile_arrangement(template, variant)
+        snap = live().snapshot(include_devices=False)
+        marked = compare.marker_plan(arr, snap, start_bar, locators, scenes, section_track,
+                                     replace_locators, set_tempo)
+        compiled = compile_plan(marked["plan"], snap)
+        ops = compiled.ops[:1] + marked["pre_ops"] + compiled.ops[1:-1] + marked["post_ops"] + compiled.ops[-1:]
+        report: dict[str, Any] = {
+            "template": f"{template.name} {variant}: {arr.total_bars} bars at {arr.bpm:g} BPM",
+            "plan": compare.plan_table(marked["rows"], locators, scenes, section_track)}
+        if marked["notes"]:
+            report["notes"] = marked["notes"]
+        report["ops"] = len(ops)
+        if dry_run:
+            report["dry_run"] = True
+            report["op_list"] = ops
+            report["next"] = "Nothing changed yet. Show the plan, then call again with dry_run=False."
+            return _dump(report)
+        if scenes and not compare.script_at_least(live().ping(), compare.SCENES_SCRIPT_VERSION):
+            return _error("The AbletonHelper Remote Script in Live is older than 0.3.0 and can't create "
+                          "scenes. Run `uv run ableton-helper install` and restart Live, or use "
+                          "scenes=False.")
+        result = live().run_ops(ops)
+        report["ok"] = result["ok"]
+        if result["errors"]:
+            report["errors"] = result["errors"][:20]
+        report["undo"] = "One undo step in Live (Cmd+Z)."
+        return _dump(report)
+    except (tpl.TemplateError, compare.CompareError, PlanError, LiveError) as e:
+        return _error(e)
+
+
+@mcp.tool()
+def compare_arrangement(genre: str, variant: str | None = None, start_bar: int | None = None,
+                        apply: bool = False) -> str:
+    """Arrange like this: compare the set's current Arrangement with a template (a genre,
+    or one made by analyze_reference) section by section, and list concrete changes: which
+    tracks to mute or unmute in which bars, loops to add where, parts the set has no track
+    for, breakdowns and lifts the set doesn't have, and sections whose locators sit
+    elsewhere. Tracks are recognised by name, like match_roles. The template starts at
+    the locator named after its first section, else bar 1 (or start_bar). apply=True
+    carries out the mutes and unmutes (clips wholly inside each range, one undo step);
+    ask the producer first. Adding loops stays a suggestion."""
+    try:
+        template = tpl.load_template(genre)
+        variant = compare.default_variant(template, variant)
+        arr = tpl.compile_arrangement(template, variant)
+        snap = live().snapshot(include_devices=False)
+        result = compare.compare(arr, snap, start_bar)
+        if apply:
+            ops = compare.mute_ops(result["changes"], beats_per_bar(snap))
+            if not ops:
+                result["applied"] = "Nothing to mute or unmute."
+                return _dump(result)
+            if not compare.script_at_least(live().ping(), compare.SCENES_SCRIPT_VERSION):
+                return _error("The AbletonHelper Remote Script in Live is older than 0.3.0 and can't mute "
+                              "clips. Run `uv run ableton-helper install` and restart Live.")
+            ran = live().run_ops(ops)
+            changed = sum(r["changed"] for r in ran["results"] if r)
+            partial = [c["say"] for c, r in zip([c for c in result["changes"] if c["action"] != "add"],
+                                                ran["results"]) if r and r["partly_inside"]]
+            result["applied"] = f"Switched {changed} clips. One undo step in Live (Cmd+Z)."
+            if partial:
+                result["needs_a_split"] = {
+                    "changes": partial,
+                    "why": "Some clips run past these sections, and the Live API can't split clips. "
+                           "Split them at the section edges (Cmd+E) and run this again."}
+            if ran["errors"]:
+                result["errors"] = ran["errors"][:20]
+        return _dump(result)
+    except (tpl.TemplateError, compare.CompareError, LiveError) as e:
         return _error(e)
 
 
