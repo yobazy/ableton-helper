@@ -28,7 +28,7 @@ from _Framework.ControlSurface import ControlSurface
 
 from .lom import Executor, read_notes, snapshot
 
-SCRIPT_VERSION = "0.1.0"
+SCRIPT_VERSION = "0.2.0"  # 0.2: create_session_midi_clip
 HOST = os.environ.get("ABLETON_HELPER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ABLETON_HELPER_PORT", "9878"))
 MAX_LINE_BYTES = 32 * 1024 * 1024

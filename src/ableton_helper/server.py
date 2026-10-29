@@ -6,12 +6,14 @@ import json
 import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
+from . import hearing
 from . import templates as tpl
+from .audio_service import AudioService, AudioServiceError
 from .connection import LiveConnection, LiveError
 from .matching import match_roles as _match_roles
-from .plan import PlanError, compile_plan, session_plan, skeleton_plan
+from .plan import PlanError, beats_per_bar, compile_plan, session_plan, skeleton_plan
 
 INSTRUCTIONS = """\
 Ableton Helper arranges tracks in Ableton Live's Arrangement View.
@@ -32,7 +34,10 @@ Rules:
   on a set that already has an arrangement.
 - Each build is one batch; tell the producer they can undo it in Live (Cmd+Z) if they
   don't like it.
-- You can't hear audio. Use track and clip names, MIDI note data, and ask the producer.
+- You can hear audio clips through the analysis service on the home PC: analyze_audio
+  (BPM, key, loudness, energy), audio_spectrogram (look at it), separate_stems,
+  audio_to_midi and tag_loop_roles (what a badly named loop is). MIDI clips have no
+  audio file; use their notes. If the PC is off, say so and carry on with names and notes.
 """
 
 mcp = FastMCP("ableton-helper", instructions=INSTRUCTIONS)
@@ -44,6 +49,32 @@ def live() -> LiveConnection:
     if _live is None:
         _live = LiveConnection()
     return _live
+
+
+_audio: AudioService | None = None
+
+
+def audio() -> AudioService:
+    global _audio
+    if _audio is None:
+        _audio = AudioService()
+    return _audio
+
+
+def _sources(track: int | None, slot: int | None, bar: float | None, path: str | None,
+             one: bool = False, snap: dict[str, Any] | None = None) -> list[hearing.AudioSource]:
+    if snap is None and not path:
+        snap = live().snapshot(include_devices=False)
+    sources = hearing.find_sources(None if path else snap, track, slot, bar, path)
+    if one and len(sources) > 1:
+        where = f"Track {track} has" if track is not None else "The set has"
+        raise hearing.HearingError(
+            f"{where} {len(sources)} audio files and this works on one; pick it with track + slot "
+            f"(Session), track + bar (Arrangement) or path: " + "; ".join(s.label for s in sources[:8]))
+    return sources
+
+
+HEARING_ERRORS = (hearing.HearingError, AudioServiceError, LiveError)
 
 
 def _dump(data: Any) -> str:
@@ -282,6 +313,150 @@ def get_clip_notes(track: int, slot: int) -> str:
     try:
         return _dump(live().send("clip_notes", {"track": track, "slot": slot}))
     except LiveError as e:
+        return _error(e)
+
+
+# ── hearing (audio analysis service on the home PC) ──────────────────────────
+
+@mcp.tool()
+def analyze_audio(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                  path: str | None = None, tags: bool = False) -> str:
+    """Listen to audio and report BPM, key (with Camelot), loudness (LUFS) and an energy
+    curve. Pick the audio as: track + slot (a Session clip), track + bar (the Arrangement
+    clip at that bar), track alone (every audio file on the track), or path (any audio file).
+    tags=True adds genre and mood tags. Results are cached by file hash, so asking again
+    is instant. Needs the home PC; MIDI clips have no audio to analyse."""
+    try:
+        return _dump(hearing.analyze(audio(), _sources(track, slot, bar, path), tags=tags))
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def audio_spectrogram(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                      path: str | None = None, start: float | None = None,
+                      duration: float | None = None, width: int | None = None,
+                      height: int | None = None):
+    """Show a mel spectrogram of one audio clip or file as an image you can look at
+    (time left to right, frequency bottom to top). Pick the audio like analyze_audio
+    (track + slot, track + bar, or path). start and duration are in seconds; width and
+    height in pixels (default 1200 x 400). Also returns the PNG's path in the cache."""
+    try:
+        [source] = _sources(track, slot, bar, path, one=True)
+        info = hearing.spectrogram(audio(), source, start, duration, width, height)
+        return [_dump(info), Image(path=info["image"])]
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def separate_stems(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                   path: str | None = None, model: str = "htdemucs", format: str = "flac") -> str:
+    """Split one audio clip or file into stems with Demucs and download them to this
+    machine. Returns the local file paths per stem (drums, bass, other, vocals; the
+    htdemucs_6s model adds guitar and piano). Pick the audio like analyze_audio. Takes
+    seconds on the PC's GPU, longer if the GPU is busy. Cached by file hash."""
+    try:
+        [source] = _sources(track, slot, bar, path, one=True)
+        return _dump(hearing.stems(audio(), source, model, format))
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def audio_to_midi(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                  path: str | None = None, add_to_live: bool = False,
+                  place_at_bar: float | None = None, bpm: float | None = None,
+                  quantize: float = 0.25, onset: float | None = None, frame: float | None = None,
+                  min_note_ms: float | None = None) -> str:
+    """Turn one audio clip or file into MIDI (basic-pitch). Returns the .mid file path,
+    the tempo used and a note summary. add_to_live=True also creates a new MIDI track
+    after the source track with the notes in a Session clip (slot 0), or, with
+    place_at_bar, in an Arrangement clip starting at that bar. Pick the audio like
+    analyze_audio. Seconds become beats at the file's detected BPM (or bpm if given);
+    quantize snaps to a grid in beats (0.25 = 1/16, 0 = off). onset and frame (0 to 1)
+    make detection stricter when higher; min_note_ms drops short blips."""
+    try:
+        snap = live().snapshot(include_devices=False) if add_to_live or not path else None
+        [source] = _sources(track, slot, bar, path, one=True, snap=snap)
+        set_tempo = snap["tempo"] if snap else None
+        bpb = beats_per_bar(snap) if snap else 4.0
+        result = hearing.audio_to_midi(audio(), source, bpm=bpm, set_tempo=set_tempo,
+                                       quantize=quantize, beats_per_bar=bpb, onset=onset,
+                                       frame=frame, min_note_ms=min_note_ms)
+        notes, length = result.pop("_notes"), result.pop("_length")
+        if add_to_live:
+            if not notes:
+                result["added_to_live"] = False
+                result["why_not"] = "No notes were detected, so nothing was added."
+                return _dump(result)
+            if place_at_bar is None and not hearing.script_supports_session_clips(live().ping()):
+                return _error("The AbletonHelper Remote Script in Live is older than 0.2.0 and can't "
+                              "create Session clips. Run `uv run ableton-helper install` and restart "
+                              "Live, or pass place_at_bar to put the MIDI in the Arrangement instead.")
+            ops = hearing.midi_clip_ops(source, notes, length, place_at_bar, bpb)
+            ran = live().run_ops(ops, stop_on_error=True)
+            result["added_to_live"] = not ran["errors"]
+            if ran["errors"]:
+                result["errors"] = ran["errors"]
+            else:
+                created = ran["results"][0]
+                result["new_track"] = {"index": created["index"], "name": created["name"]}
+                result["placed"] = "Session slot 0" if place_at_bar is None else f"Arrangement bar {place_at_bar:g}"
+                result["undo"] = "One undo step in Live (Cmd+Z)."
+        return _dump(result)
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def tag_loop_roles(track: int | None = None, slot: int | None = None, path: str | None = None,
+                   only_unclear: bool = True, rename_tracks: bool = False,
+                   use_stems: bool = True) -> str:
+    """Listen to loops and say what each one is (kick, clap, hats, perc, drums, bass,
+    chords, pad, lead, vocal, fx), with a confidence and the reason. With nothing picked
+    it covers the set's audio clips whose track and clip names don't already say
+    (only_unclear=False: all of them); or pick a track, a track + slot, or a path.
+    rename_tracks=True renames those tracks to e.g. "Bass (Audio 7)" in one undo step, so
+    match_roles and arrange_session can place them; tell the producer first. Uses stems
+    (Demucs on the PC), pitch and key; a few seconds per new loop, cached after."""
+    try:
+        snap = None if path else live().snapshot(include_devices=False)
+        sources = _sources(track, slot, None, path, snap=snap)
+        if only_unclear and track is None and path is None:
+            sources = [s for s in sources if not hearing.roles.name_kind(s.track_name, s.clip_name)]
+            if not sources:
+                return _dump({"loops": [], "note": "Every audio track's name already says what it is. "
+                                                   "Pass only_unclear=False to listen anyway."})
+        result = hearing.tag_roles(audio(), sources, use_stems=use_stems)
+        if rename_tracks and snap is not None:
+            ops, renamed = hearing.rename_ops(snap, hearing.track_roles(result["loops"]))
+            if ops:
+                ran = live().run_ops(ops)
+                result["renamed"] = renamed
+                if ran["errors"]:
+                    result["rename_errors"] = ran["errors"]
+            else:
+                result["renamed"] = []
+        for item in result["loops"]:
+            item.pop("_verdict", None)
+        return _dump(result)
+    except HEARING_ERRORS as e:
+        return _error(e)
+
+
+@mcp.tool()
+def detect_sections(track: int | None = None, slot: int | None = None, bar: float | None = None,
+                    path: str | None = None) -> str:
+    """Find the sections of a song or long recording (intro, verse, chorus, break, outro...),
+    with start times, bars from the first downbeat and an energy per section. Meant for
+    reference tracks: pass path, or pick a clip like analyze_audio. Says so plainly if the
+    analysis service doesn't offer sections yet."""
+    try:
+        snap = None if path else live().snapshot(include_devices=False)
+        [source] = _sources(track, slot, bar, path, one=True, snap=snap)
+        return _dump(hearing.sections(audio(), source, beats_per_bar(snap) if snap else 4.0))
+    except HEARING_ERRORS as e:
         return _error(e)
 
 
