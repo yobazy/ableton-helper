@@ -190,14 +190,14 @@ def _bars(a: int, b: int) -> str:
 def _merge_changes(changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Join the same change on the same track over back-to-back sections."""
     out: list[dict[str, Any]] = []
-    for c in changes:
+    for c in sorted(changes, key=lambda c: (c["track"], c["action"], c["bar"])):
         last = out[-1] if out else None
         if last and last["action"] == c["action"] and last["track"] == c["track"] and last["end_bar"] == c["bar"]:
             last["end_bar"] = c["end_bar"]
             last["sections"] += c["sections"]
         else:
             out.append({**c, "sections": list(c["sections"])})
-    return out
+    return sorted(out, key=lambda c: (c["bar"], c["track"]))
 
 
 def find_start_bar(arr: tpl.Arrangement, snapshot: dict[str, Any]) -> tuple[int, str]:
@@ -279,11 +279,13 @@ def compare(arr: tpl.Arrangement, snapshot: dict[str, Any], start_bar: int | Non
         prev, s = arr.sections[i - 1], arr.sections[i]
         if prev.energy and s.energy and prev.energy - s.energy >= 3 and set_energy[i] >= set_energy[i - 1]:
             outs = [c["track_name"] for c in changes if c["action"] == "mute" and s.name in c["sections"]]
-            summary.append(
-                f"The template breaks down at {s.name} ({_bars(s.start + shift, s.end + shift)}, energy "
-                f"{prev.energy} to {s.energy}) but the set keeps going"
-                + (f": take out {', '.join(outs)}." if outs else
-                   ": take the kick and bass out there so the next section can hit."))
+            fix = f": take out {', '.join(outs)}." if outs else ": take the kick and bass out there."
+            if i < len(arr.sections) - 1:
+                summary.append(f"The template breaks down at {s.name} ({_bars(s.start + shift, s.end + shift)}, "
+                               f"energy {prev.energy} to {s.energy}) but the set keeps going{fix}")
+            else:
+                summary.append(f"The template winds down at {s.name} ({_bars(s.start + shift, s.end + shift)}, "
+                               f"energy {prev.energy} to {s.energy}) but the set doesn't{fix}")
         elif prev.energy and s.energy and s.energy - prev.energy >= 3 and set_energy[i] <= set_energy[i - 1]:
             summary.append(f"The template lifts at {s.name} ({_bars(s.start + shift, s.end + shift)}, energy "
                            f"{prev.energy} to {s.energy}) but the set doesn't get bigger there.")
