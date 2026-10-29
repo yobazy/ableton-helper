@@ -115,7 +115,7 @@ client call (`AudioService.sections`) already existed from Phase 3.1.
       restart, a 124.02 BPM tempo, silent overwrite of a same-named template, `../` in a
       template name
 - [x] Independent review pass (below)
-- [x] Draft PR
+- [x] Draft PR: #2 "Phase 4: arrange from a reference track" (base `phase-3-1-hear`)
 
 ## Review pass
 
