@@ -142,3 +142,65 @@ track 3 slot 1", "Turn the bassline on track 2 into MIDI and put it on a new tra
 3. Try `tag_loop_roles` on a few real loops and tell me where it's wrong; it was tuned on
    synthetic sounds.
 4. Reinstall the Remote Script (`uv run ableton-helper install`) for MIDI into Session clips.
+
+## Review pass 2026-10-29
+
+An independent review of the whole branch diff (`git diff origin/master...HEAD`) against the
+brief. Every finding was reproduced first (a scratch script, then a failing test).
+
+### Fixed (each with a test)
+
+1. **Any file could be uploaded to the PC through `path=`.** `analyze_audio(path="~/.ssh/id_ed25519")`
+   hashed the key, got `audio_not_found` and uploaded it, where the service keeps it for 24 h.
+   `find_sources` now takes only audio suffixes (wav, aif(f), flac, mp3, ogg, m4a and a few
+   more). Clip paths from Live are unchanged. Test: `test_path_must_be_an_audio_file`.
+2. **A line break in a file name broke the upload.** The multipart `filename` only replaced `"`,
+   so a name with `\r\n` (legal on macOS) split the part header into two lines. It now becomes a
+   space. Test: `test_a_line_break_in_a_file_name_stays_in_the_filename`.
+3. **A transcription without a MIDI URL stuck in the cache.** It was cached with `midi_path: null`,
+   and every later call crashed in `Path(None)` (TypeError, not caught by the tools). Today's
+   service always sends `midi`, so it's latent, but a bad entry would have stayed for good.
+   Test: `test_a_transcription_without_midi_isnt_cached_broken`.
+4. **`audio_to_midi` said "Session slot 1" for slot 0.** Every tool counts slots from 0 (and the
+   docstring says slot 0), so Claude would have looked in the wrong slot afterwards. Now "Session
+   slot 0". Test: an extra assert in `test_audio_to_midi_adds_a_session_clip`.
+
+### Rejected
+
+- **`tempo_for` crashes when BPM `confidence` is null:** reproduced, but the service's
+  `rhythm.py` always sets a number, so it can't happen.
+- **A stem URL ending in `..` would escape the stems folder:** the service builds those names
+  and refuses ones starting with `.`; and the write would fail (the target is a folder) rather
+  than overwrite anything.
+
+### Checked and true
+
+- Test counts in Status (19 + 32 + 14 + 9 + 2). CLAP is still broken today (cosine 0.9995 for
+  the health pair) and the service is still v0.1.0 without `sections`, as the notes say.
+- Every rename label ("Kick (Audio 7)" ... "FX (Audio 7)") maps back to its own role through
+  `roles.name_kind`, so `rename_tracks` does feed `match_roles`.
+- Brief items 1 to 4 and the optional sections stub are all there. No new em dashes in copy.
+
+### Checks run (on `pc`)
+
+- `uv` and `pip install` still aren't available here, so again no real pytest or FastMCP. I
+  wrote a fresh pytest stand-in and FastMCP stub in this run's scratch dir (not committed):
+  **77 passed, 2 skipped** (the opt-in pair) with the fixes; 74 passed before them.
+- The opt-in integration test against the real service: **2 passed**
+  (`test_audio_service_live.py`, generated tones only).
+
+### Left
+
+- Still needs one real `uv run pytest` on the Mac (Needs Bazil 1): the stub can't prove FastMCP
+  takes the `[text, Image]` spectrogram return.
+- Not verified: for an **unwarped** audio clip, Live may report `length` in seconds rather than
+  beats, which would make `audio_to_midi`'s Session clip the wrong length. Worth one try in Live.
+- If a Session MIDI clip fails after its track was created, `audio_to_midi` leaves an empty
+  MIDI track (the error is reported). Minor.
+- `place_at_bar` without `add_to_live` is silently ignored. Minor.
+
+### Needs Bazil (after review)
+
+1. Items 1 to 4 above still stand (CLAP is still broken on the service as of today).
+2. Try `audio_to_midi(add_to_live=True)` once on an unwarped audio clip and check the new
+   clip's length.
