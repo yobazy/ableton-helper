@@ -20,6 +20,7 @@ class FakeClip:
         self.is_midi_clip, self.is_audio_clip = midi, not midi
         self.start_time = float(start_time)
         self.looping = True
+        self.muted = False
         self.notes = list(notes or [])
         if file_path:
             self.file_path = file_path
@@ -94,6 +95,11 @@ class FakeCue:
         self.time, self.name = time, ""
 
 
+class FakeScene:
+    def __init__(self, name=""):
+        self.name, self.color = name, 0
+
+
 class FakeView:
     def __init__(self):
         self.shown = []
@@ -135,6 +141,14 @@ class FakeSong:
             self.tracks.append(track)
         else:
             self.tracks.insert(index, track)
+
+    def create_scene(self, index=-1):
+        scene = FakeScene()
+        if index < 0:
+            self.scenes.append(scene)
+        else:
+            self.scenes.insert(index, scene)
+        return scene
 
     def delete_track(self, index):
         del self.tracks[index]
