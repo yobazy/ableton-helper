@@ -17,6 +17,9 @@ from .audio_service import AudioService, AudioServiceError, AudioServiceUnavaila
 from .plan import beats_per_bar
 
 MAX_FILES = 24  # per call, so "every clip in the set" can't run for an hour
+# path= sends the file to the PC, so only these go (what Live and the service read).
+AUDIO_SUFFIXES = {".wav", ".wave", ".aif", ".aiff", ".aifc", ".flac", ".mp3", ".ogg", ".oga",
+                  ".opus", ".m4a", ".mp4", ".aac", ".caf"}
 
 
 class HearingError(ValueError):
@@ -74,6 +77,8 @@ def find_sources(snapshot: dict[str, Any] | None, track: int | None = None, slot
         p = Path(path).expanduser()
         if not p.is_file():
             raise HearingError(f"No file at {p}")
+        if p.suffix.lower() not in AUDIO_SUFFIXES:
+            raise HearingError(f"{p.name} isn't an audio file (" + ", ".join(sorted(AUDIO_SUFFIXES)) + ").")
         return [AudioSource(str(p))]
     if snapshot is None:
         raise HearingError("Give a track (and slot or bar) or a file path.")

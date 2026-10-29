@@ -323,7 +323,7 @@ def analyze_audio(track: int | None = None, slot: int | None = None, bar: float 
                   path: str | None = None, tags: bool = False) -> str:
     """Listen to audio and report BPM, key (with Camelot), loudness (LUFS) and an energy
     curve. Pick the audio as: track + slot (a Session clip), track + bar (the Arrangement
-    clip at that bar), track alone (every audio file on the track), or path (any file).
+    clip at that bar), track alone (every audio file on the track), or path (any audio file).
     tags=True adds genre and mood tags. Results are cached by file hash, so asking again
     is instant. Needs the home PC; MIDI clips have no audio to analyse."""
     try:
@@ -402,7 +402,7 @@ def audio_to_midi(track: int | None = None, slot: int | None = None, bar: float 
             else:
                 created = ran["results"][0]
                 result["new_track"] = {"index": created["index"], "name": created["name"]}
-                result["placed"] = "Session slot 1" if place_at_bar is None else f"Arrangement bar {place_at_bar:g}"
+                result["placed"] = "Session slot 0" if place_at_bar is None else f"Arrangement bar {place_at_bar:g}"
                 result["undo"] = "One undo step in Live (Cmd+Z)."
         return _dump(result)
     except HEARING_ERRORS as e:

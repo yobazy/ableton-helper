@@ -110,6 +110,7 @@ def test_audio_to_midi_adds_a_session_clip(live, svc):
                                      {"start": 0.97, "end": 1.2, "pitch": 48, "velocity": 0.8}]
     out = json.loads(server.audio_to_midi(track=1, slot=0, add_to_live=True))
     assert out["added_to_live"] and out["new_track"]["index"] == 2
+    assert out["placed"] == "Session slot 0"  # slots count from 0, like every other tool
     track = live.song.tracks[2]
     assert track.name == "Audio 7 (MIDI)"
     clip = track.clip_slots[0].clip

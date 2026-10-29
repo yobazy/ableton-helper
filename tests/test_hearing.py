@@ -119,6 +119,28 @@ def test_missing_file_is_a_clear_error(svc, tmp_path):
         svc.analyze(tmp_path / "gone.wav", ["bpm"])
 
 
+def test_a_line_break_in_a_file_name_stays_in_the_filename(tmp_path):
+    from ableton_helper.audio_service import _multipart
+    f = tmp_path / "take\r\nX-Evil: 1.wav"
+    f.write_bytes(b"data")
+    body, _ = _multipart({}, f)
+    head = body.split(b"\r\n\r\n", 1)[0].decode()
+    assert len(head.split("\r\n")) == 3 and "X-Evil" in head.split("\r\n")[1]
+
+
+def test_a_transcription_without_midi_isnt_cached_broken(svc, files):
+    route = svc._route
+
+    def no_midi(path, sha, stem, fields):
+        if path == "/v1/transcribe":
+            return svc._json({"audio": sha, "notes": [], "method": "basic-pitch"})
+        return route(path, sha, stem, fields)
+
+    svc._route = no_midi
+    assert svc.transcribe(files["Audio 7"])["midi_path"] is None
+    assert svc.transcribe(files["Audio 7"])["midi_path"] is None  # asks again, doesn't crash
+
+
 def test_service_error_carries_its_code(svc, files):
     from ableton_helper.audio_service import Response
     svc.stored["x"] = "x"
@@ -168,6 +190,17 @@ def test_bad_addresses(snapshot):
         hearing.find_sources(None, path="/nowhere/at/all.wav")
     with pytest.raises(hearing.HearingError, match="need a track"):
         hearing.find_sources(snapshot, slot=0)
+
+
+def test_path_must_be_an_audio_file(tmp_path):
+    # path= uploads the file to the PC, so only audio files go.
+    key = tmp_path / "id_ed25519"
+    key.write_text("not audio")
+    with pytest.raises(hearing.HearingError, match="audio file"):
+        hearing.find_sources(None, path=str(key))
+    loop = tmp_path / "Loop.AIFF"
+    loop.write_bytes(b"FORM")
+    assert hearing.find_sources(None, path=str(loop))[0].path == str(loop)
 
 
 # ── analyze ──────────────────────────────────────────────────────────────────

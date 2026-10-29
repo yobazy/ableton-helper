@@ -68,7 +68,7 @@ def _multipart(fields: dict[str, str], file_path: Path) -> tuple[bytes, str]:
     for name, value in fields.items():
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
                      f"{value}\r\n".encode("utf-8"))
-    filename = file_path.name.replace('"', "'")
+    filename = file_path.name.replace('"', "'").replace("\r", " ").replace("\n", " ")
     parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
                  "Content-Type: application/octet-stream\r\n\r\n".encode("utf-8"))
     parts.append(file_path.read_bytes())
@@ -285,7 +285,7 @@ class AudioService:
         name = f"transcribe-{tag}.json"
         midi_dest = self.cache_path(sha, f"{p.stem}-{tag}.mid")
         hit = self._cached_json(sha, name)
-        if hit is not None and Path(hit.get("midi_path", "")).is_file():
+        if hit is not None and Path(hit.get("midi_path") or "").is_file():
             return {**hit, "cached": True}
         data = self._post_audio("/v1/transcribe", p, sha, opts, TIMEOUTS["transcribe"]).json()
         midi_path = None
