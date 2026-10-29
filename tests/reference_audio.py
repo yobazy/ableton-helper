@@ -17,7 +17,7 @@ RATE = 6000
 BPM = 120.0
 BAR_SECONDS = 4 * 60.0 / BPM  # 2 s
 
-# (name, bars, parts) — the shape of a small club track.
+# (name, bars, parts): the shape of a small club track.
 LAYOUT = [
     ("intro", 8, {"kick", "hats"}),
     ("inst", 8, {"kick", "hats", "bass", "music"}),
