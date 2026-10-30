@@ -177,3 +177,67 @@ loops like it", "Compare my arrangement with it; what should I mute where?"
    `compare_arrangement(apply=True)`.
 5. Check in Live that setting `Clip.muted` on an arrangement clip behaves like the clip
    activator (it does in the API docs; not tried in Live tonight).
+
+## Decisions applied 2026-10-30
+
+Overnight run on `pc` (worktree `ov/ableton-p4`, pushed to `phase-4-arrange`).
+
+- **Merged `origin/phase-3-1-hear`** (the spectrogram test fix for the real FastMCP, and the
+  3.1 notes). It merged cleanly with no conflicts.
+- **Decision 2A: Ableton Helper maps allin1's labels** (commit "Decision 2A: ..."). The
+  service is unchanged.
+  - `reference.SECTION_LABELS`, a documented table: intro → Intro, verse → Groove,
+    chorus → Drop, inst → Drop, solo → Groove, break → Breakdown, bridge → Breakdown,
+    outro → Outro. Any other label (or a new one from a future allin1) falls back to Groove
+    (`FALLBACK_KIND`). `label_kind()` looks up a label (any case).
+  - It's a hint, and energy and the kick have the last word. The old rule still holds
+    (a drop needs the kick and energy 9+, or 7+ after a jump of 3). On top of that, a
+    section whose label says Drop counts as a drop at 8+ when it comes straight after a
+    breakdown (or the breakdown and its build). So an "inst" groove before the first
+    breakdown stays a Groove (the fixtures' 48-bar track still names Intro, Groove,
+    Breakdown, Drop, Outro), and an "inst" without the kick is a Breakdown. With no energy at
+    all, the table's kind is used directly (inst is now a Drop there too, as chorus was).
+  - **Template override**: any template can carry `section_labels: {inst: Groove, solo: Build}`.
+    Keys are allin1 labels and values are one of Intro, Groove, Breakdown, Build, Drop or
+    Outro, in any case. They are checked when the template loads, so a typo is an error
+    rather than ignored. `analyze_reference` takes them from `labels_from=<template>` when
+    given, else from the `ref_<name>` template it is about to replace, so editing the saved
+    YAML and analysing again sticks. Generated templates write the full table out so it's
+    there to edit. The answer has `labels_from` ("the default table" or "<template>'s
+    section_labels") and warns when `labels_from` has none.
+  - The intro/outro detection and the breakdown rule go through the same table, so an
+    override like `bridge: Groove` really stops bridges being breakdowns.
+  - Tests (7 new in `tests/test_reference.py`): the table and its fallback, inst/chorus vs
+    verse after a breakdown, no kick, no energy, overrides, template validation, and the
+    end-to-end edit-and-re-analyse loop with `labels_from`.
+  - README's `analyze_reference` row explains it.
+- **Decision 3A (sentence case everywhere)**: no change needed here. The package has no UI
+  styling, and a scan of user-facing strings found no all-caps letter-spaced labels. New
+  copy is sentence case.
+
+Calls I made:
+- I kept the table in Ableton Helper's `reference.py` rather than `templates.py`. The kind
+  list is in `templates.py` (`SECTION_KINDS`) because templates validate against it.
+- "solo" → Groove rather than Drop: it's rare in dance music, and energy promotes it anyway
+  when it's loud.
+- The "after a breakdown" condition is there because both test tracks (and real house
+  tracks) label grooves "inst". Without it, every energy-8 groove became a Drop.
+
+Checks run: `uv sync && uv run pytest`: **125 passed, 4 skipped** (the opt-in live tests),
+with real pytest and FastMCP for the first time on this branch (118 before the decision
+work). Self-review of `git diff origin/phase-3-1-hear...HEAD` for tonight's changes found
+no bugs.
+
+Left: the label table and the 8-after-a-breakdown rule are tuned on made-up sections.
+SPEC 4.1's three real house tracks will tell whether allin1 labels drops "chorus" or "inst"
+as often as expected.
+
+### Needs Bazil (2026-10-30)
+
+1. Roll out `sections-allin1` on the service (morning decision 1), then run
+   `ABLETON_HELPER_LIVE_AUDIO=1 uv run pytest tests/test_reference_live.py`.
+2. Try `analyze_reference` on three house tracks you know. If the drops are named wrong, say
+   which allin1 label they had (it's in each section row as `label`). A
+   `section_labels` edit may fix it without code.
+3. Item 2 above (real pytest) is done on pc. Items 4 and 5 (reinstall the Remote Script,
+   `Clip.muted` in Live) still stand.
