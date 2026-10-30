@@ -204,3 +204,42 @@ brief. Every finding was reproduced first (a scratch script, then a failing test
 1. Items 1 to 4 above still stand (CLAP is still broken on the service as of today).
 2. Try `audio_to_midi(add_to_live=True)` once on an unwarped audio clip and check the new
    clip's length.
+
+## Decisions applied 2026-10-30
+
+No decisions from the 2026-10-29 digest apply to this branch (the ableton-helper decisions,
+1 and 2, are about Phase 4 / PR #2). This run was the first real test run, now that `uv` is on
+`pc`.
+
+### What changed
+
+- **The real suite had one failure:** `test_spectrogram_tool_returns_an_image` compared the
+  JSON path (a string) with `Image.path`. The real `mcp` `Image` keeps a `Path`; last night's
+  stand-in kept a string. The tool code was right, so the fix is in the assertion (`str(...)`).
+- **New test** `test_spectrogram_goes_through_fastmcp_as_text_and_image`: it calls the tool
+  through the real `FastMCP.call_tool` and checks the reply is a text block plus a
+  `image/png` block holding the PNG bytes. That closes the open question from the review
+  pass ("the stub can't prove FastMCP takes the `[text, Image]` return"): it does.
+- Copy rule (decision 3A, sentence case, no all-caps letter-spaced labels): checked the branch
+  diff. There's no UI here and no all-caps labels in tool output or docs, so nothing changed.
+
+### Checks run (on `pc`)
+
+- `uv sync && uv run pytest`: **78 passed, 2 skipped** (the opt-in live pair). FastMCP 1.30.0
+  registers every tool with its real signature.
+- The repo defines no lint or type checks. `uvx ruff check --isolated --select F,E9,B` found
+  only style items (unused imports in `tests/test_pipeline.py` from master, `zip()` without
+  `strict=` where lengths are already checked). Left as they are.
+- Self-review of `git diff origin/master...HEAD`: no new issues; this run only touched a test.
+
+### Left
+
+- The opt-in live test (`ABLETON_HELPER_LIVE_AUDIO=1 uv run pytest tests/test_audio_service_live.py`)
+  wasn't run this time: the command needed an approval this unattended session can't give.
+  It passed against the real service on 2026-10-29.
+
+### Needs Bazil (2026-10-30)
+
+1. Needs Bazil item 1 above (one real `uv run pytest`) is done on `pc`. You can drop it.
+2. Still open: fix CLAP in audio-analysis, try `tag_loop_roles` on real loops, reinstall the
+   Remote Script, and try `audio_to_midi` on one unwarped clip.
