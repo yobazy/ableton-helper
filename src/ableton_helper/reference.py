@@ -38,8 +38,30 @@ from .hearing import SECTIONS_MISSING, AudioSource, HearingError
 VARIANT = "reference"
 PHRASE_BARS = 8
 SILENCE_LABELS = {"start", "end"}  # allin1's silence before and after the music
-# When a section has no energy: what its label usually is in a dance track.
-LABEL_KINDS = {"chorus": "Drop", "break": "Breakdown", "bridge": "Breakdown"}
+# allin1's section labels (Harmonix's set) → the kind of section they usually are in
+# electronic music. Ableton Helper owns this table, not the service (decision 2A,
+# 2026-10-29): allin1 has no "drop", and in a dance track its "chorus" and "inst" are
+# where the drops are. It's a hint, and energy and the kick have the last word (see
+# name_sections). A template's ``section_labels`` overrides entries; labels not here
+# (and future ones) fall back to FALLBACK_KIND.
+SECTION_LABELS = {
+    "intro": "Intro",
+    "verse": "Groove",
+    "chorus": "Drop",
+    "inst": "Drop",
+    "solo": "Groove",
+    "break": "Breakdown",
+    "bridge": "Breakdown",
+    "outro": "Outro",
+}
+FALLBACK_KIND = "Groove"
+
+
+def label_kind(label: str | None, overrides: dict[str, str] | None = None) -> str:
+    """The kind of section allin1's label suggests: the template's override, else the table,
+    else Groove."""
+    key = (label or "").strip().lower()
+    return (overrides or {}).get(key) or SECTION_LABELS.get(key, FALLBACK_KIND)
 
 # The parts a reference is heard as. Kinds and fallbacks are matching.py's, so the
 # producer's loops find their way in through match_roles.
@@ -358,22 +380,26 @@ def hear_parts(sections: list[RefSection], stem_files: dict[str, str]) -> None:
         s.parts.sort(key=order.index)
 
 
-def name_sections(sections: list[RefSection], heard: bool) -> None:
-    """Dance names from the label, the energy and whether the kick is in."""
+def name_sections(sections: list[RefSection], heard: bool,
+                  labels: dict[str, str] | None = None) -> None:
+    """Dance names from the label (through SECTION_LABELS, ``labels`` overriding it), the
+    energy and whether the kick is in."""
     n = len(sections)
+    hints = [label_kind(s.label, labels) for s in sections]
     lead = 0  # sections labelled intro from the start, and outro at the end
-    while lead < n - 1 and sections[lead].label == "intro":
+    while lead < n - 1 and hints[lead] == "Intro":
         lead += 1
     tail = n
-    while tail > max(lead, 1) and sections[tail - 1].label == "outro":
+    while tail > max(lead, 1) and hints[tail - 1] == "Outro":
         tail -= 1
     for i, s in enumerate(sections):
         if i < lead or i >= tail:
             s.kind = "Intro" if i < lead else "Outro"
             continue
+        hint = hints[i]
         kick = ("kick" in s.parts) if heard else None
-        if s.energy is None:  # no loudness this time: go by allin1's label
-            kind = LABEL_KINDS.get(s.label, "Groove")
+        if s.energy is None:  # no loudness this time: go by the label
+            kind = hint if hint not in ("Intro", "Outro") else FALLBACK_KIND  # one mid-song
             if kick is False:
                 kind = "Breakdown"
             elif kick and kind == "Breakdown":
@@ -387,16 +413,23 @@ def name_sections(sections: list[RefSection], heard: bool) -> None:
         level = s.energy
         before = sections[i - 1].energy if i and sections[i - 1].energy is not None else level
         # A drop is (nearly) the loudest part, or a jump of 3+ after a dip, with the kick in.
-        is_drop = kick is not False and s.label not in ("intro", "outro") and \
-            (level >= 9 or (level >= 7 and level - before >= 3))
-        if i == 0 and n > 1 and (s.label == "intro" or not is_drop):
+        # A label that says drop (chorus, inst) also counts at 8+ straight after a breakdown
+        # or its build: that's where a dance track's drop sits, and an "inst" groove before
+        # the first breakdown stays a groove.
+        after_breakdown = any(p.kind == "Breakdown" for p in sections[max(0, i - 2):i])
+        is_drop = kick is not False and hint not in ("Intro", "Outro") and \
+            (level >= 9 or (level >= 7 and level - before >= 3)
+             or (hint == "Drop" and level >= 8 and after_breakdown))
+        if i == 0 and n > 1 and (hint == "Intro" or not is_drop):
             s.kind = "Intro"
-        elif i == n - 1 and n > 2 and (s.label == "outro" or not is_drop):
+        elif i == n - 1 and n > 2 and (hint == "Outro" or not is_drop):
             s.kind = "Outro"
         elif is_drop:
             s.kind = "Drop"
-        elif kick is False or (kick is None and level <= 5) or (s.label in ("break", "bridge") and level <= 6):
+        elif kick is False or (kick is None and level <= 5) or (hint == "Breakdown" and level <= 6):
             s.kind = "Breakdown"
+        elif hint == "Build":  # only from a template's section_labels
+            s.kind = "Build"
         else:
             s.kind = "Groove"
     # Breakdown, then a short section, then a drop: the short one is the build.
@@ -444,7 +477,7 @@ def template_key_for(name: str) -> str:
 
 
 def template_data(key: str, title: str, bpm: float, sections: list[RefSection],
-                  meta: dict[str, Any]) -> dict[str, Any]:
+                  meta: dict[str, Any], section_labels: dict[str, str] | None = None) -> dict[str, Any]:
     used = [r for r in REF_ROLES if any(r in s.parts for s in sections)] or list(REF_ROLES)
     total = sum(s.bars for s in sections)
     minutes = total * 4 * 60 / bpm / 60 if bpm else 0
@@ -461,8 +494,29 @@ def template_data(key: str, title: str, bpm: float, sections: list[RefSection],
                           "roles": [p for p in s.parts if p in used]} for s in sections],
             "transitions": transitions(sections),
         }},
+        **({"section_labels": section_labels} if section_labels else {}),
         "reference": meta,
     }
+
+
+def section_labels_for(key: str, labels_from: str | None) -> tuple[dict[str, str] | None, str, str | None]:
+    """The label overrides for analysing into ``key``: ``labels_from``'s section_labels when
+    given, else those already in ``key``'s template (so editing them and analysing again
+    sticks), else none. Also says where they came from, and a warning if labels_from has none."""
+    if labels_from:
+        source = tpl.load_template(labels_from)  # TemplateError if there's no such template
+        if source.section_labels:
+            return source.section_labels, f"{tpl.template_key(labels_from)}'s section_labels", None
+        return None, "the default table", (f"{tpl.template_key(labels_from)} has no section_labels, "
+                                           "so the default label table was used.")
+    if (tpl.user_template_dir() / f"{key}.yaml").exists():
+        try:
+            existing = tpl.load_template(key).section_labels
+        except tpl.TemplateError:
+            existing = None  # it's about to be replaced anyway
+        if existing and existing != SECTION_LABELS:
+            return existing, f"{key}'s section_labels", None
+    return None, "the default table", None
 
 
 def save_template(key: str, data: dict[str, Any]) -> Path:
@@ -508,9 +562,12 @@ def tidy_bpm(bpm: float) -> float:
 
 def analyze_reference(service: AudioService, source: AudioSource, name: str | None = None,
                       phrase_bars: int = PHRASE_BARS, use_stems: bool = True,
-                      save: bool = True) -> dict[str, Any]:
+                      save: bool = True, labels_from: str | None = None) -> dict[str, Any]:
     if phrase_bars not in (1, 2, 4, 8, 16):
         raise HearingError("phrase_bars is 1 (whole bars only), 2, 4, 8 or 16.")
+    title = name or Path(source.path).stem
+    key = template_key_for(title)
+    labels, labels_used, label_warning = section_labels_for(key, labels_from)
     if not service.has_feature("sections"):
         raise HearingError(SECTIONS_MISSING)
     try:
@@ -537,13 +594,13 @@ def analyze_reference(service: AudioService, source: AudioSource, name: str | No
         except (AudioServiceError, ValueError, OSError) as e:
             warnings.append(f"Stems failed ({e}), so the parts per section are the usual ones for "
                             "each kind of section rather than heard.")
-    name_sections(sections, heard)
+    name_sections(sections, heard, labels)
+    if label_warning:
+        warnings.append(label_warning)
     if not heard:
         for s in sections:
             s.parts = list(DEFAULT_PARTS[s.kind])
 
-    title = name or Path(source.path).stem
-    key = template_key_for(title)
     meta = {
         "file": Path(source.path).name,
         "sha256": service.file_hash(source.path),
@@ -557,7 +614,7 @@ def analyze_reference(service: AudioService, source: AudioSource, name: str | No
                       "bar": round(grid.bar(float(s["start"])) + 1, 1), "energy": s.get("energy")}
                      for s in data.get("segments") or []],
     }
-    out_data = template_data(key, title, bpm, sections, meta)
+    out_data = template_data(key, title, bpm, sections, meta, {**SECTION_LABELS, **(labels or {})})
     template = tpl.parse_template(out_data, key)
     replaced = save and (tpl.user_template_dir() / f"{key}.yaml").exists()
     saved = save_template(key, out_data) if save else None
@@ -576,7 +633,7 @@ def analyze_reference(service: AudioService, source: AudioSource, name: str | No
     out: dict[str, Any] = {
         "template": key, "variant": VARIANT, "name": template.name, "bpm": round(bpm, 2),
         "bpm_from": bpm_from, "bars": sum(s.bars for s in sections), "phrase_bars": phrase_bars,
-        "sections": rows, "parts_from": meta["parts_from"],
+        "sections": rows, "parts_from": meta["parts_from"], "labels_from": labels_used,
         "source": source.label,
     }
     if saved:
@@ -589,5 +646,7 @@ def analyze_reference(service: AudioService, source: AudioSource, name: str | No
                    f"locators in the set; arrange_session('{key}', 'reference') arranges the Session loops "
                    f"like it; compare_arrangement('{key}') checks an existing arrangement against it.")
     out["energy_is"] = ("1 to 10 from loudness: 10 is the loudest section, one step per 2 dB below it. "
-                        "allin1's labels have no 'drop'; drops are named from energy and the kick.")
+                        "allin1's labels have no 'drop': its chorus and inst count as drops when the "
+                        "energy and the kick agree. Edit section_labels in the template and run "
+                        "analyze_reference again to map labels another way.")
     return out

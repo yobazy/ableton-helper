@@ -88,6 +88,7 @@ class Template:
     roles: dict[str, Role]
     variants: dict[str, dict[str, Any]]
     reference: dict[str, Any] | None = None  # set on templates made from a reference track
+    section_labels: dict[str, str] | None = None  # allin1 label → section kind, for analyze_reference
 
 
 @dataclass
@@ -190,10 +191,33 @@ def parse_template(data: dict[str, Any], key: str) -> Template:
         roles=roles,
         variants=data["variants"],
         reference=data.get("reference"),
+        section_labels=_section_labels(data.get("section_labels"), key),
     )
     for vname in template.variants:
         compile_arrangement(template, vname)  # fail fast on a broken template
     return template
+
+
+# The kinds of section a reference's labels can map to (analyze_reference names them).
+SECTION_KINDS = ("Intro", "Groove", "Breakdown", "Build", "Drop", "Outro")
+
+
+def _section_labels(raw: Any, key: str) -> dict[str, str] | None:
+    """``section_labels: {inst: Groove, solo: Drop}``: keys are allin1 labels (any case),
+    values one of SECTION_KINDS (any case)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TemplateError(f"Template '{key}': section_labels is a map like {{chorus: Drop}}")
+    kinds = {k.lower(): k for k in SECTION_KINDS}
+    out = {}
+    for label, kind in raw.items():
+        found = kinds.get(str(kind).strip().lower())
+        if not found:
+            raise TemplateError(f"Template '{key}': section_labels maps '{label}' to '{kind}'; "
+                                f"use one of {', '.join(SECTION_KINDS)}")
+        out[str(label).strip().lower()] = found
+    return out
 
 
 # ── compiling ────────────────────────────────────────────────────────────────

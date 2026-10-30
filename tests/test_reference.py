@@ -306,3 +306,95 @@ def test_silent_stems_count_as_failed(tmp_path):
         s.start_s, s.end_s = s.start * 2.0, s.end * 2.0
     with pytest.raises(ValueError, match="silent"):
         reference.hear_parts(secs, paths)
+
+
+# ── decision 2A: allin1's labels → kinds of section ──────────────────────────
+
+def test_the_label_table_has_a_fallback_and_takes_overrides():
+    assert reference.label_kind("chorus") == "Drop" and reference.label_kind("inst") == "Drop"
+    assert reference.label_kind("Break") == "Breakdown" and reference.label_kind("verse") == "Groove"
+    assert reference.label_kind("something new") == reference.FALLBACK_KIND == "Groove"
+    assert reference.label_kind(None) == "Groove"
+    assert reference.label_kind("inst", {"inst": "Groove"}) == "Groove"
+    assert reference.label_kind("chorus", {"inst": "Groove"}) == "Drop"
+    # Every kind in the table is one a template can name.
+    assert set(reference.SECTION_LABELS.values()) <= set(tpl.SECTION_KINDS)
+
+
+def _drop_after_a_breakdown(label, parts=("kick", "hats", "bass", "music")):
+    full = ["kick", "hats", "bass", "music"]
+    return _sections([("intro", 16, 6, ["kick", "hats"]), ("inst", 16, 8, full),
+                      # 6 → 8 isn't a big enough jump by energy alone: only the label makes it a drop
+                      ("break", 16, 6, ["music"]), (label, 16, 8, list(parts)),
+                      ("outro", 16, 6, ["kick", "hats"])])
+
+
+def test_inst_or_chorus_after_a_breakdown_is_a_drop_at_energy_8():
+    for label in ("inst", "chorus"):
+        secs = _drop_after_a_breakdown(label)
+        name_sections(secs, heard=True)
+        # The inst before the breakdown stays a groove; the one after it is the drop.
+        assert [s.name for s in secs] == ["Intro", "Groove", "Breakdown", "Drop", "Outro"], label
+    secs = _drop_after_a_breakdown("verse")
+    name_sections(secs, heard=True)
+    assert secs[3].kind == "Groove"
+
+
+def test_a_drop_label_without_the_kick_is_not_a_drop():
+    secs = _drop_after_a_breakdown("inst", parts=["music", "vocal"])
+    name_sections(secs, heard=True)
+    assert secs[3].kind == "Breakdown"
+
+
+def test_without_energy_inst_counts_as_a_drop():
+    secs = _sections([("intro", 8, None, []), ("inst", 16, None, []), ("break", 8, None, []),
+                      ("inst", 16, None, []), ("outro", 8, None, [])])
+    name_sections(secs, heard=False)
+    assert [s.name for s in secs] == ["Intro", "Drop 1", "Breakdown", "Drop 2", "Outro"]
+
+
+def test_overrides_change_the_names():
+    secs = _drop_after_a_breakdown("inst")
+    name_sections(secs, heard=True, labels={"inst": "Groove"})
+    assert secs[3].kind == "Groove"
+    secs = _sections([("intro", 8, None, []), ("inst", 16, None, []), ("solo", 8, None, []),
+                      ("chorus", 16, None, []), ("outro", 8, None, [])])
+    name_sections(secs, heard=False, labels={"inst": "Groove", "solo": "Build"})
+    assert [s.name for s in secs] == ["Intro", "Groove", "Build", "Drop", "Outro"]
+
+
+def test_section_labels_in_a_template_are_checked():
+    data = {"roles": {"kick": {}},
+            "variants": {"v": {"sections": [{"name": "A", "bars": 8, "roles": ["kick"]}]}}}
+    t = tpl.parse_template({**data, "section_labels": {"Inst": "groove", "solo": "BUILD"}}, "x")
+    assert t.section_labels == {"inst": "Groove", "solo": "Build"}
+    assert tpl.parse_template(data, "x").section_labels is None
+    with pytest.raises(tpl.TemplateError, match="use one of"):
+        tpl.parse_template({**data, "section_labels": {"inst": "Chorus"}}, "x")
+    with pytest.raises(tpl.TemplateError, match="is a map"):
+        tpl.parse_template({**data, "section_labels": ["inst"]}, "x")
+
+
+def test_a_templates_section_labels_override_the_table(svc, track_file, user_templates):
+    out = json.loads(server.analyze_reference(path=str(track_file)))
+    assert out["labels_from"] == "the default table"
+    path = user_templates / "ref_club_track.yaml"
+    assert tpl.load_template("ref_club_track").section_labels == reference.SECTION_LABELS  # ready to edit
+
+    # Edit the saved template and analyse again: the edit sticks.
+    path.write_text(path.read_text().replace("inst: Drop", "inst: Build"))
+    again = json.loads(server.analyze_reference(path=str(track_file)))
+    assert again["labels_from"] == "ref_club_track's section_labels"
+    assert [r["name"] for r in again["sections"]][:2] == ["Intro", "Build"]
+    assert tpl.load_template("ref_club_track").section_labels["inst"] == "Build"
+
+    # labels_from takes another template's; one without any says so.
+    other = json.loads(server.analyze_reference(path=str(track_file), name="Other",
+                                                labels_from="ref_club_track", save=False))
+    assert other["labels_from"] == "ref_club_track's section_labels"
+    assert other["sections"][1]["name"] == "Build"
+    plain = json.loads(server.analyze_reference(path=str(track_file), name="Other",
+                                                labels_from="house", save=False))
+    assert plain["labels_from"] == "the default table"
+    assert any("house has no section_labels" in w for w in plain["warnings"])
+    assert "No template" in server.analyze_reference(path=str(track_file), labels_from="nope")

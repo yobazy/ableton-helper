@@ -481,19 +481,21 @@ def detect_sections(track: int | None = None, slot: int | None = None, bar: floa
 @mcp.tool()
 def analyze_reference(path: str | None = None, track: int | None = None, slot: int | None = None,
                       bar: float | None = None, name: str | None = None, phrase_bars: int = 8,
-                      use_stems: bool = True, save: bool = True) -> str:
+                      use_stems: bool = True, save: bool = True, labels_from: str | None = None) -> str:
     """Turn a reference track into an arrangement template: its sections in bars (snapped to
     phrase_bars, 8 by default), an energy of 1 to 10 per section, and which parts play in
     each (kick, hats and tops, bass, chords and synths, vocal), heard from stems. Saved as
     genre "ref_<name>" with variant "reference", so preview_template, build_skeleton,
     arrange_session, mark_sections and compare_arrangement all take it. Pass path (a song
     file), or pick a clip like analyze_audio. Needs the home PC; about 15 s for a 5-minute
-    track on its GPU, cached after."""
+    track on its GPU, cached after. allin1's section labels map to kinds of section by a table
+    (chorus and inst lean to Drop); a template's section_labels override it, from labels_from
+    (any template) or from the template being replaced."""
     try:
         snap = None if path else live().snapshot(include_devices=False)
         [source] = _sources(track, slot, bar, path, one=True, snap=snap)
         return _dump(reference.analyze_reference(audio(), source, name=name, phrase_bars=phrase_bars,
-                                                 use_stems=use_stems, save=save))
+                                                 use_stems=use_stems, save=save, labels_from=labels_from))
     except HEARING_ERRORS + (tpl.TemplateError,) as e:
         return _error(e)
 
