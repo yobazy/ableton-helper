@@ -220,8 +220,9 @@ Calls I made:
   list is in `templates.py` (`SECTION_KINDS`) because templates validate against it.
 - "solo" → Groove rather than Drop: it's rare in dance music, and energy promotes it anyway
   when it's loud.
-- The "after a breakdown" condition is there because both test tracks (and real house
-  tracks) label grooves "inst". Without it, every energy-8 groove became a Drop.
+- The "after a breakdown" condition is there because "inst" means any instrumental part, and
+  the test tracks label their grooves "inst". Without it, every energy-8 groove became a Drop.
+  Whether real allin1 output does the same is unchecked (see "Left").
 
 Checks run: `uv sync && uv run pytest`: **125 passed, 4 skipped** (the opt-in live tests),
 with real pytest and FastMCP for the first time on this branch (118 before the decision
