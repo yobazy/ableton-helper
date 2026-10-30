@@ -1,5 +1,6 @@
 """The hearing MCP tools end to end: fake Live set + fake analysis service."""
 
+import base64
 import json
 
 import pytest
@@ -97,7 +98,23 @@ def test_one_file_tools_want_one_file(live, svc):
 
 def test_spectrogram_tool_returns_an_image(live, svc):
     info, image = server.audio_spectrogram(track=1, slot=0)
-    assert json.loads(info)["image"] == image.path
+    assert json.loads(info)["image"] == str(image.path)
+
+
+def test_spectrogram_goes_through_fastmcp_as_text_and_image(live, svc):
+    import anyio
+    from fake_audio_service import PNG
+
+    async def call():
+        return await server.mcp.call_tool("audio_spectrogram", {"track": 1, "slot": 0})
+
+    result = anyio.run(call)
+    content = result[0] if isinstance(result, tuple) else result
+    kinds = [c.type for c in content]
+    assert kinds == ["text", "image"]
+    assert json.loads(content[0].text)["image"].endswith(".png")
+    assert content[1].mimeType == "image/png"
+    assert base64.b64decode(content[1].data) == PNG
 
 
 def test_midi_clip_is_a_tool_error(live, svc):
