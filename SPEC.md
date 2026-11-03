@@ -167,6 +167,19 @@ The SPEC's "on this Mac" acceptance doesn't apply as written: the models run on 
 
 ### Phase 4 — Arranging from a reference track
 
+**Progress (2026-10-29):** built against the service's `/v1/sections` (allin1, on the
+audio-analysis branch `sections-allin1`, not deployed yet), tested with a mocked service:
+- 4.1 + 4.2: `analyze_reference` counts bars from allin1's downbeats, snaps sections to
+  8-bar phrases (finding a pickup bar if there is one), takes energy from per-section
+  loudness and the parts per section from Demucs stems, and saves a Phase 1 template
+  (`ref_<name>`, variant `reference`) that every template tool accepts.
+- 4.3: `arrange_session("ref_<name>", "reference")` is the one request. New:
+  `mark_sections` (locators, empty scenes, a Sections track; dry run first) and
+  `compare_arrangement` (mute, unmute and add per section; missing breakdowns;
+  `apply=True` for the mutes).
+- Not yet checked: the 4.1 acceptance (3 known house tracks within 1 bar) needs the
+  deployed service and real tracks. Notes: [docs/PROGRESS-phase-4.md](docs/PROGRESS-phase-4.md).
+
 **4.1 Reference analysis**
 - `analyze_reference(path)` finds beats, downbeats, and sections (allin1), measures energy per section, and uses stem separation to work out which instruments are active in each section.
 - *Acceptance:* for 3 known house tracks, the detected section boundaries fall within 1 bar of the correct phrase boundaries.

@@ -73,6 +73,7 @@ def _clip_info(clip, include_notes):
         "is_midi": _attr(clip, "is_midi_clip", bool, False),
         "is_audio": _attr(clip, "is_audio_clip", bool, False),
         "looping": _attr(clip, "looping", bool, False),
+        "muted": _attr(clip, "muted", bool, False),  # the clip's activator is off
     }
     path = _attr(clip, "file_path", str, None)
     if path:
@@ -432,6 +433,45 @@ class Executor(object):
                 value = op[key]
                 setattr(track, key, int(value) if key == "color" else value)
         return {"name": track.name}
+
+    def _op_create_scene(self, op):
+        """An empty Session View scene, appended (index -1) or inserted at ``index``."""
+        song = self.song
+        index = int(op.get("index", -1))
+        song.create_scene(index)
+        scenes = list(song.scenes)
+        scene = scenes[-1] if index < 0 or index >= len(scenes) else scenes[index]
+        if op.get("name"):
+            scene.name = str(op["name"])
+        if op.get("color") is not None:
+            try:
+                scene.color = int(op["color"])
+            except Exception:
+                pass  # scene colours need Live 11+
+        return {"index": len(scenes) - 1 if index < 0 else index, "name": scene.name}
+
+    def _op_set_clips_muted(self, op):
+        """Switch arrangement clips off (muted) or on, for clips wholly inside [start, end).
+
+        Clips that only overlap the range are left alone and counted: the Live API
+        can't split them, and muting one would silence bars outside the range too.
+        """
+        track = self._track(op["track"])
+        start = float(op["start"])
+        end = float(op["end"])
+        muted = bool(op.get("muted", True))
+        changed = partial = 0
+        for clip in track.arrangement_clips:
+            c_start, c_end = float(clip.start_time), float(clip.end_time)
+            if c_end <= start + EPSILON or c_start >= end - EPSILON:
+                continue
+            if c_start >= start - EPSILON and c_end <= end + EPSILON:
+                if _attr(clip, "muted", bool, False) != muted:
+                    clip.muted = muted
+                    changed += 1
+            else:
+                partial += 1
+        return {"changed": changed, "partly_inside": partial}
 
     def _op_show_arrangement(self, op):
         if self.application is not None:
