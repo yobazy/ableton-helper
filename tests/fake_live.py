@@ -53,6 +53,11 @@ class FakeSlot:
     def has_clip(self):
         return self.clip is not None
 
+    def create_clip(self, length):
+        if self.clip is not None:
+            raise RuntimeError("slot not empty")
+        self.clip = FakeClip("", length, True)
+
 
 class FakeTrack:
     def __init__(self, name, midi=True, slots=8):
